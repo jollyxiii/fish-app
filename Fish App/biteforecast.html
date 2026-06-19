@@ -1,0 +1,53 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Bluegill Bite Forecast</title>
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <main class="app">
+    <h1>Bluegill Bite Forecast</h1>
+    <p class="subtitle">Check your saved spots and see a simple BiteScore based on live forecast data.</p>
+
+    <section class="card">
+      <label for="spotSelect">Choose a fishing spot</label>
+      <select id="spotSelect"></select>
+
+      <button id="forecastBtn">Get Forecast</button>
+    </section>
+
+    <section class="card">
+      <h2>Forecast Summary</h2>
+      <div id="weatherOutput">
+        <p>No forecast loaded yet.</p>
+      </div>
+    </section>
+
+    <section class="card score-card">
+      <h2>BiteScore</h2>
+      <div id="scoreOutput" class="score">--</div>
+      <p id="scoreLabel">Pick a spot and load the forecast.</p>
+    </section>
+
+   <section class="card">
+  <h2>Hourly Forecast</h2>
+  <div id="hourlyChart" class="hourly-chart"></div>
+</section>
+
+
+    <section class="card">
+      <h2>Why this score?</h2>
+      <div id="reasonOutput">
+        <p>No explanation yet.</p>
+      </div>
+    </section>
+  </main>
+
+  <div id="chartTooltip" class="chart-tooltip hidden"></div>
+
+  <script src="spots.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>
