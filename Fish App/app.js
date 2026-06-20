@@ -5,6 +5,8 @@ const scoreOutput = document.getElementById("scoreOutput");
 const scoreLabel = document.getElementById("scoreLabel");
 const reasonOutput = document.getElementById("reasonOutput");
 const hourlyOutput = document.getElementById("hourlyOutput");
+const chartTooltip = document.getElementById("chartTooltip");
+
 
 function populateSpots() {
   spotSelect.innerHTML = "";
@@ -171,6 +173,110 @@ function renderHourlyForecast(hourlyResults) {
   hourlyOutput.innerHTML = topHtml + hourlyHtml;
 }
 
+
+   function getBarClass(label) {
+  if (label === "Excellent" || label === "Good") return "good";
+  if (label === "Fair") return "fair";
+  return "tough";
+}
+
+function renderHourlyForecast(hourlyResults) {
+  if (!hourlyResults.length) {
+    hourlyOutput.innerHTML = "<p>No hourly forecast available for today.</p>";
+    return;
+  }
+
+  const topWindows = [...hourlyResults]
+    .sort((a, b) => b.score - a.score)
+    .slice(0, 3);
+
+  const topHtml = `
+    <div class="top-windows">
+      <h3>Best windows today</h3>
+      <ul>
+        ${topWindows.map(window => `
+          <li>
+            <strong>${window.formattedTime}</strong> — Score ${window.score} (${window.label})
+          </li>
+        `).join("")}
+      </ul>
+    </div>
+  `;
+
+  const chartHtml = `
+    <div class="hourly-chart-card">
+      <h3>Hourly bite chart</h3>
+      <div class="hourly-chart" id="hourlyChart">
+        ${hourlyResults.map(hour => `
+          <div class="hour-bar-wrap">
+            <div
+              class="hour-bar ${getBarClass(hour.label)}"
+              style="height: ${Math.max(hour.score * 18, 18)}px"
+              data-time="${hour.formattedTime}"
+              data-score="${hour.score}"
+              data-label="${hour.label}"
+              data-temp="${hour.temperature}"
+              data-cloud="${hour.cloudCover}"
+              data-wind="${hour.windSpeed}"
+              data-reasons="${hour.reasons.join(" | ")}"
+              aria-label="${hour.formattedTime}, bite score ${hour.score}, ${hour.label}"
+              tabindex="0"
+            ></div>
+            <div class="hour-label">${hour.formattedTime.replace(":00", "")}</div>
+          </div>
+        `).join("")}
+      </div>
+    </div>
+  `;
+
+  hourlyOutput.innerHTML = topHtml + chartHtml;
+
+  const bars = document.querySelectorAll(".hour-bar");
+
+  bars.forEach(bar => {
+    const showTooltip = (event) => {
+      const reasons = bar.dataset.reasons
+        .split(" | ")
+        .map(reason => `<li>${reason}</li>`)
+        .join("");
+
+      chartTooltip.innerHTML = `
+        <strong>${bar.dataset.time}</strong>
+        <div>Bite Score: ${bar.dataset.score} (${bar.dataset.label})</div>
+        <div>Temp: ${bar.dataset.temp}°F</div>
+        <div>Cloud Cover: ${bar.dataset.cloud}%</div>
+        <div>Wind: ${bar.dataset.wind} mph</div>
+        <ul>${reasons}</ul>
+      `;
+
+      chartTooltip.classList.remove("hidden");
+
+      const tooltipWidth = 240;
+      const x = Math.min(event.clientX + 14, window.innerWidth - tooltipWidth - 16);
+      const y = Math.max(event.clientY - 20, 16);
+
+      chartTooltip.style.left = `${x}px`;
+      chartTooltip.style.top = `${y}px`;
+    };
+
+    const hideTooltip = () => {
+      chartTooltip.classList.add("hidden");
+    };
+
+    bar.addEventListener("mousemove", showTooltip);
+    bar.addEventListener("mouseenter", showTooltip);
+    bar.addEventListener("mouseleave", hideTooltip);
+    bar.addEventListener("focus", () => {
+      const rect = bar.getBoundingClientRect();
+      showTooltip({
+        clientX: rect.left + 20,
+        clientY: rect.top
+      });
+    });
+    bar.addEventListener("blur", hideTooltip);
+  });
+}
+
 async function getForecast() {
   const selectedSpot = spots[Number(spotSelect.value)];
 
@@ -270,13 +376,13 @@ async function getForecast() {
     `;
 
     renderHourlyForecast(hourlyResults);
-  } catch (error) {
-    console.error("Forecast error:", error);
-    weatherOutput.innerHTML = `<p>${error.message}</p>`;
+  }
+   catch (error) {
+    weatherOutput.innerHTML = `<p>Error loading forecast.</p>`;
     scoreOutput.textContent = "--";
     scoreLabel.textContent = "Error";
-    reasonOutput.innerHTML = "<p>The app could not load valid forecast data.</p>";
-    hourlyOutput.innerHTML = "<p>Could not build hourly forecast.</p>";
+    reasonOutput.innerHTML = `<p>${error.message}</p>`;
+    hourlyOutput.innerHTML = "<p>No hourly forecast available.</p>";
   }
 }
 
