@@ -152,7 +152,8 @@ li {
 }
 
 .top-windows,
-.hourly-list {
+.hourly-list,
+.hourly-chart-card {
   background: var(--card-alt);
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
@@ -164,7 +165,8 @@ li {
 }
 
 .top-windows h3,
-.hourly-list h3 {
+.hourly-list h3,
+.hourly-chart-card h3 {
   margin-top: 0;
   margin-bottom: 12px;
   font-size: 1rem;
@@ -203,40 +205,7 @@ li {
   color: var(--tough);
 }
 
-@media (min-width: 760px) {
-  .card:first-of-type {
-    display: flex;
-    align-items: end;
-    gap: 14px;
-    flex-wrap: wrap;
-  }
-
-  .card:first-of-type label {
-    width: 100%;
-  }
-
-  button {
-    margin-top: 0;
-  }
-}
-
-@media (max-width: 759px) {
-  .app {
-    padding: 24px 16px 48px;
-  }
-
-  .card {
-    padding: 18px;
-  }
-
-  select {
-    max-width: 100%;
-  }
-
-  button {
-    width: 100%;
-  }
-}
+/* Chart */
 
 .hourly-chart {
   display: grid;
@@ -245,9 +214,8 @@ li {
   gap: 10px;
   min-height: 260px;
   padding: 20px 12px 12px;
+  border-radius: 12px;
   background: linear-gradient(to top, #eef4f2 0%, #f8fbfa 100%);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-sm);
   overflow-x: auto;
 }
 
@@ -255,13 +223,14 @@ li {
   display: flex;
   flex-direction: column;
   align-items: center;
+  justify-content: flex-end;
   min-width: 30px;
 }
 
 .hour-bar {
   width: 100%;
   max-width: 34px;
-  min-height: 16px;
+  min-height: 18px;
   border-radius: 10px 10px 6px 6px;
   background: var(--accent);
   cursor: pointer;
@@ -290,112 +259,24 @@ li {
   margin-top: 8px;
   font-size: 0.75rem;
   color: var(--muted);
-  writing-mode: horizontal-tb;
-}
-
-.chart-tooltip {
-  position: fixed;
-  z-index: 999;
-  max-width: 240px;
-  background: #14201b;
-  color: #fff;
-  padding: 12px 14px;
-  border-radius: 12px;
-  box-shadow: 0 18px 40px rgba(0,0,0,0.18);
-  font-size: 0.9rem;
-  line-height: 1.4;
-  pointer-events: none;
-}
-
-.chart-tooltip strong {
-  display: block;
-  margin-bottom: 6px;
-  font-size: 0.95rem;
-}
-
-.hourly-chart-card {
-  background: var(--card-alt);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-sm);
-  padding: 16px;
-}
-
-.hourly-chart-card h3 {
-  margin-top: 0;
-  margin-bottom: 14px;
-  font-size: 1rem;
-  text-transform: uppercase;
-  letter-spacing: 0.06em;
-  color: var(--muted);
-}
-
-.hourly-chart {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(28px, 1fr));
-  align-items: end;
-  gap: 10px;
-  min-height: 260px;
-  padding: 20px 12px 12px;
-  border-radius: 12px;
-  background: linear-gradient(to top, #eef4f2 0%, #f8fbfa 100%);
-  overflow-x: auto;
-}
-
-.hour-bar-wrap {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  min-width: 30px;
-}
-
-.hour-bar {
-  width: 100%;
-  max-width: 34px;
-  min-height: 18px;
-  border-radius: 10px 10px 6px 6px;
-  cursor: pointer;
-  transition: transform 0.18s ease, filter 0.18s ease;
-  outline: none;
-}
-
-.hour-bar:hover,
-.hour-bar:focus {
-  transform: translateY(-4px);
-  filter: brightness(1.08);
-}
-
-.hour-bar.good {
-  background: linear-gradient(180deg, #34a853 0%, #2e7d32 100%);
-}
-
-.hour-bar.fair {
-  background: linear-gradient(180deg, #d6a436 0%, #b7791f 100%);
-}
-
-.hour-bar.tough {
-  background: linear-gradient(180deg, #d85b6a 0%, #b23a48 100%);
-}
-
-.hour-label {
-  margin-top: 8px;
-  font-size: 0.72rem;
-  color: var(--muted);
   text-align: center;
-  line-height: 1.2;
+  white-space: nowrap;
 }
 
 .chart-tooltip {
   position: fixed;
   z-index: 9999;
-  width: 240px;
+  max-width: 240px;
   background: #14201b;
-  color: white;
+  color: #ffffff;
   padding: 12px 14px;
   border-radius: 12px;
   box-shadow: 0 18px 40px rgba(0, 0, 0, 0.18);
   font-size: 0.9rem;
   line-height: 1.4;
   pointer-events: none;
+  left: 0;
+  top: 0;
 }
 
 .chart-tooltip strong {
@@ -403,20 +284,6 @@ li {
   margin-bottom: 6px;
   font-size: 0.95rem;
 }
-
-.chart-tooltip ul {
-  margin: 8px 0 0;
-  padding-left: 18px;
-}
-
-.chart-tooltip li {
-  margin-bottom: 4px;
-}
-
-.hidden {
-  display: none;
-}
-
 
 .hidden {
   display: none;

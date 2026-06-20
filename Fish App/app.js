@@ -7,7 +7,6 @@ const reasonOutput = document.getElementById("reasonOutput");
 const hourlyOutput = document.getElementById("hourlyOutput");
 const chartTooltip = document.getElementById("chartTooltip");
 
-
 function populateSpots() {
   spotSelect.innerHTML = "";
 
@@ -130,59 +129,57 @@ function buildHourlyForecast(hourly, sunrise, sunset) {
   return hourlyResults;
 }
 
-function renderHourlyForecast(hourlyResults) {
-  if (!hourlyResults.length) {
-    hourlyOutput.innerHTML = "<p>No hourly forecast available for today.</p>";
-    return;
-  }
-
-  const topWindows = [...hourlyResults]
-    .sort((a, b) => b.score - a.score)
-    .slice(0, 3);
-
-  const topHtml = `
-    <div class="top-windows">
-      <h3>Best windows today</h3>
-      <ul>
-        ${topWindows.map(window => `
-          <li>
-            <strong>${window.formattedTime}</strong> — Score ${window.score} (${window.label})
-          </li>
-        `).join("")}
-      </ul>
-    </div>
-  `;
-
-  const hourlyHtml = `
-    <div class="hourly-list">
-      <h3>Hourly scores</h3>
-      <ul>
-        ${hourlyResults.map(hour => `
-          <li>
-            <strong>${hour.formattedTime}</strong> —
-            Score ${hour.score} (${hour.label}),
-            Temp ${hour.temperature}°F,
-            Cloud ${hour.cloudCover}%,
-            Wind ${hour.windSpeed} mph
-          </li>
-        `).join("")}
-      </ul>
-    </div>
-  `;
-
-  hourlyOutput.innerHTML = topHtml + hourlyHtml;
-}
-
-
-   function getBarClass(label) {
+function getBarClass(label) {
   if (label === "Excellent" || label === "Good") return "good";
   if (label === "Fair") return "fair";
   return "tough";
 }
 
+function escapeHtml(value) {
+  return String(value)
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;")
+    .replaceAll("'", "&#39;");
+}
+
+function showChartTooltip(bar, event) {
+  if (!chartTooltip) return;
+
+  const rawReasons = bar.dataset.reasons ? bar.dataset.reasons.split(" | ") : [];
+  const reasons = rawReasons
+    .map(reason => `<li>${escapeHtml(reason)}</li>`)
+    .join("");
+
+  chartTooltip.innerHTML = `
+    <strong>${escapeHtml(bar.dataset.time || "")}</strong>
+    <div>Bite Score: ${escapeHtml(bar.dataset.score || "")} (${escapeHtml(bar.dataset.label || "")})</div>
+    <div>Temp: ${escapeHtml(bar.dataset.temp || "")}°F</div>
+    <div>Cloud Cover: ${escapeHtml(bar.dataset.cloud || "")}%</div>
+    <div>Wind: ${escapeHtml(bar.dataset.wind || "")} mph</div>
+    <ul>${reasons}</ul>
+  `;
+
+  chartTooltip.classList.remove("hidden");
+
+  const tooltipWidth = 240;
+  const x = Math.min(event.clientX + 14, window.innerWidth - tooltipWidth - 16);
+  const y = Math.max(event.clientY - 20, 16);
+
+  chartTooltip.style.left = `${x}px`;
+  chartTooltip.style.top = `${y}px`;
+}
+
+function hideChartTooltip() {
+  if (!chartTooltip) return;
+  chartTooltip.classList.add("hidden");
+}
+
 function renderHourlyForecast(hourlyResults) {
   if (!hourlyResults.length) {
     hourlyOutput.innerHTML = "<p>No hourly forecast available for today.</p>";
+    hideChartTooltip();
     return;
   }
 
@@ -212,14 +209,14 @@ function renderHourlyForecast(hourlyResults) {
             <div
               class="hour-bar ${getBarClass(hour.label)}"
               style="height: ${Math.max(hour.score * 18, 18)}px"
-              data-time="${hour.formattedTime}"
-              data-score="${hour.score}"
-              data-label="${hour.label}"
-              data-temp="${hour.temperature}"
-              data-cloud="${hour.cloudCover}"
-              data-wind="${hour.windSpeed}"
-              data-reasons="${hour.reasons.join(" | ")}"
-              aria-label="${hour.formattedTime}, bite score ${hour.score}, ${hour.label}"
+              data-time="${escapeHtml(hour.formattedTime)}"
+              data-score="${escapeHtml(hour.score)}"
+              data-label="${escapeHtml(hour.label)}"
+              data-temp="${escapeHtml(hour.temperature)}"
+              data-cloud="${escapeHtml(hour.cloudCover)}"
+              data-wind="${escapeHtml(hour.windSpeed)}"
+              data-reasons="${escapeHtml(hour.reasons.join(" | "))}"
+              aria-label="${escapeHtml(hour.formattedTime)}, bite score ${hour.score}, ${hour.label}"
               tabindex="0"
             ></div>
             <div class="hour-label">${hour.formattedTime.replace(":00", "")}</div>
@@ -234,55 +231,42 @@ function renderHourlyForecast(hourlyResults) {
   const bars = document.querySelectorAll(".hour-bar");
 
   bars.forEach(bar => {
-    const showTooltip = (event) => {
-      const reasons = bar.dataset.reasons
-        .split(" | ")
-        .map(reason => `<li>${reason}</li>`)
-        .join("");
+    bar.addEventListener("mousemove", event => showChartTooltip(bar, event));
+    bar.addEventListener("mouseenter", event => showChartTooltip(bar, event));
+    bar.addEventListener("mouseleave", hideChartTooltip);
 
-      chartTooltip.innerHTML = `
-        <strong>${bar.dataset.time}</strong>
-        <div>Bite Score: ${bar.dataset.score} (${bar.dataset.label})</div>
-        <div>Temp: ${bar.dataset.temp}°F</div>
-        <div>Cloud Cover: ${bar.dataset.cloud}%</div>
-        <div>Wind: ${bar.dataset.wind} mph</div>
-        <ul>${reasons}</ul>
-      `;
-
-      chartTooltip.classList.remove("hidden");
-
-      const tooltipWidth = 240;
-      const x = Math.min(event.clientX + 14, window.innerWidth - tooltipWidth - 16);
-      const y = Math.max(event.clientY - 20, 16);
-
-      chartTooltip.style.left = `${x}px`;
-      chartTooltip.style.top = `${y}px`;
-    };
-
-    const hideTooltip = () => {
-      chartTooltip.classList.add("hidden");
-    };
-
-    bar.addEventListener("mousemove", showTooltip);
-    bar.addEventListener("mouseenter", showTooltip);
-    bar.addEventListener("mouseleave", hideTooltip);
     bar.addEventListener("focus", () => {
       const rect = bar.getBoundingClientRect();
-      showTooltip({
-        clientX: rect.left + 20,
+      showChartTooltip(bar, {
+        clientX: rect.left + rect.width / 2,
         clientY: rect.top
       });
     });
-    bar.addEventListener("blur", hideTooltip);
+
+    bar.addEventListener("blur", hideChartTooltip);
   });
+}
+
+function updateScoreLabelStyle(label) {
+  scoreLabel.classList.remove("good", "fair", "tough");
+
+  if (label === "Excellent" || label === "Good") {
+    scoreLabel.classList.add("good");
+  } else if (label === "Fair") {
+    scoreLabel.classList.add("fair");
+  } else {
+    scoreLabel.classList.add("tough");
+  }
 }
 
 async function getForecast() {
   const selectedSpot = spots[Number(spotSelect.value)];
 
+  hideChartTooltip();
   weatherOutput.innerHTML = "<p>Loading forecast...</p>";
   scoreOutput.textContent = "--";
   scoreLabel.textContent = "Calculating...";
+  scoreLabel.classList.remove("good", "fair", "tough");
   reasonOutput.innerHTML = "<p>Checking conditions...</p>";
   hourlyOutput.innerHTML = "<p>Building hourly forecast...</p>";
 
@@ -368,6 +352,7 @@ async function getForecast() {
 
     scoreOutput.textContent = currentResult.score;
     scoreLabel.textContent = currentResult.label;
+    updateScoreLabelStyle(currentResult.label);
 
     reasonOutput.innerHTML = `
       <ul>
@@ -376,11 +361,12 @@ async function getForecast() {
     `;
 
     renderHourlyForecast(hourlyResults);
-  }
-   catch (error) {
+  } catch (error) {
+    hideChartTooltip();
     weatherOutput.innerHTML = `<p>Error loading forecast.</p>`;
     scoreOutput.textContent = "--";
     scoreLabel.textContent = "Error";
+    scoreLabel.classList.remove("good", "fair", "tough");
     reasonOutput.innerHTML = `<p>${error.message}</p>`;
     hourlyOutput.innerHTML = "<p>No hourly forecast available.</p>";
   }
