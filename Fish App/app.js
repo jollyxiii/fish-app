@@ -7,6 +7,7 @@ const scoreHelp = document.getElementById("scoreHelp");
 const reasonOutput = document.getElementById("reasonOutput");
 const hourlyOutput = document.getElementById("hourlyOutput");
 const chartTooltip = document.getElementById("chartTooltip");
+const selectedHourDetails = document.getElementById("selectedHourDetails");
 
 function populateSpots() {
   spotSelect.innerHTML = "";
@@ -297,20 +298,59 @@ function renderHourlyForecast(hourlyResults) {
   const bars = document.querySelectorAll(".hour-bar");
 
   bars.forEach(bar => {
-    bar.addEventListener("mousemove", event => showChartTooltip(bar, event));
-    bar.addEventListener("mouseenter", event => showChartTooltip(bar, event));
-    bar.addEventListener("mouseleave", hideChartTooltip);
+  bar.addEventListener("mousemove", event => showChartTooltip(bar, event));
+  bar.addEventListener("mouseenter", event => showChartTooltip(bar, event));
+  bar.addEventListener("mouseleave", hideChartTooltip);
 
-    bar.addEventListener("focus", () => {
-      const rect = bar.getBoundingClientRect();
-      showChartTooltip(bar, {
-        clientX: rect.left + rect.width / 2,
-        clientY: rect.top
-      });
+  bar.addEventListener("focus", () => {
+    const rect = bar.getBoundingClientRect();
+    showChartTooltip(bar, {
+      clientX: rect.left + rect.width / 2,
+      clientY: rect.top
+    });
+  });
+
+  bar.addEventListener("blur", hideChartTooltip);
+
+  bar.addEventListener("click", () => {
+    document.querySelectorAll(".hour-bar.selected").forEach(el => {
+      el.classList.remove("selected");
     });
 
-    bar.addEventListener("blur", hideChartTooltip);
+    bar.classList.add("selected");
+
+    const selectedHour = {
+      formattedTime: bar.dataset.time,
+      score: bar.dataset.score,
+      label: bar.dataset.label,
+      temperature: bar.dataset.temp,
+      cloudCover: bar.dataset.cloud,
+      windSpeed: bar.dataset.wind,
+      reasons: bar.dataset.reasons.split(" | ")
+    };
+
+    renderSelectedHour(selectedHour);
   });
+});
+
+if (bars.length > 0) {
+  const firstBar = bars[0];
+
+  firstBar.classList.add("selected");
+
+  const selectedHour = {
+    formattedTime: firstBar.dataset.time,
+    score: firstBar.dataset.score,
+    label: firstBar.dataset.label,
+    temperature: firstBar.dataset.temp,
+    cloudCover: firstBar.dataset.cloud,
+    windSpeed: firstBar.dataset.wind,
+    reasons: firstBar.dataset.reasons.split(" | ")
+  };
+
+  renderSelectedHour(selectedHour);
+}
+  
 }
 
 function updateScoreLabelStyle(label) {
@@ -341,6 +381,48 @@ function updateScoreHelp(score, label) {
     scoreHelp.textContent = "Pick a spot and load the forecast.";
     scoreHelp.classList.add("neutral-state");
   }
+}
+
+function renderSelectedHour(hour) {
+  selectedHourDetails.classList.remove("empty");
+
+  selectedHourDetails.innerHTML = `
+    <div class="selected-hour-header">
+      <div>
+        <div class="selected-hour-time">${hour.formattedTime}</div>
+        <div class="top-window-note">${hour.label} bite window</div>
+      </div>
+      <div class="selected-hour-score ${getBarClass(hour.label)}">
+        ${hour.score}
+      </div>
+    </div>
+
+    <div class="selected-hour-grid">
+      <div class="selected-hour-stat">
+        <div class="selected-hour-stat-label">Temperature</div>
+        <div class="selected-hour-stat-value">${hour.temperature}°F</div>
+      </div>
+
+      <div class="selected-hour-stat">
+        <div class="selected-hour-stat-label">Cloud Cover</div>
+        <div class="selected-hour-stat-value">${hour.cloudCover}%</div>
+      </div>
+
+      <div class="selected-hour-stat">
+        <div class="selected-hour-stat-label">Wind</div>
+        <div class="selected-hour-stat-value">${hour.windSpeed} mph</div>
+      </div>
+
+      <div class="selected-hour-stat">
+        <div class="selected-hour-stat-label">Bite Label</div>
+        <div class="selected-hour-stat-value">${hour.label}</div>
+      </div>
+    </div>
+
+    <ul class="selected-hour-reasons">
+      ${hour.reasons.map(reason => `<li>${reason}</li>`).join("")}
+    </ul>
+  `;
 }
 
 async function getForecast() {
