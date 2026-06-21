@@ -303,3 +303,67 @@ li {
 .hourly-chart::-webkit-scrollbar-track {
   background: transparent;
 }
+
+.top-windows {
+  margin-bottom: 16px;
+}
+
+.top-windows-list {
+  display: grid;
+  gap: 10px;
+  list-style: none;
+  padding: 0;
+  margin: 0;
+}
+
+.top-window-card {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 14px;
+  padding: 14px 16px;
+  background: #f8fbfa;
+  border: 1px solid var(--border);
+  border-radius: 14px;
+}
+
+.top-window-main {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+
+.top-window-time {
+  font-size: 1.15rem;
+  font-weight: 700;
+  color: var(--text);
+  line-height: 1.2;
+}
+
+.top-window-note {
+  font-size: 0.92rem;
+  color: var(--muted);
+}
+
+.top-window-score {
+  min-width: 56px;
+  height: 56px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 999px;
+  font-weight: 700;
+  font-size: 1rem;
+  color: white;
+  flex-shrink: 0;
+}
+
+hour-score {
+  font-size: 0.78rem;
+  font-weight: 700;
+  color: var(--text);
+  line-height: 1;
+  margin-bottom: 6px;
+  min-height: 14px;
+}

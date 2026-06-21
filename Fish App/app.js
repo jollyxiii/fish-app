@@ -183,44 +183,109 @@ function renderHourlyForecast(hourlyResults) {
     return;
   }
 
-  const topWindows = [...hourlyResults]
-    .sort((a, b) => b.score - a.score)
-    .slice(0, 3);
+const strongHours = [...hourlyResults]
+  .filter(hour => hour.score >= 8)
+  .sort((a, b) => a.time - b.time);
 
-  const topHtml = `
-    <div class="top-windows">
-      <h3>Best windows today</h3>
-      <ul>
-        ${topWindows.map(window => `
-          <li>
-            <strong>${window.formattedTime}</strong> — Score ${window.score} (${window.label})
+const groupedWindows = [];
+
+for (const hour of strongHours) {
+  const lastWindow = groupedWindows[groupedWindows.length - 1];
+
+  if (!lastWindow) {
+    groupedWindows.push({
+      start: hour,
+      end: hour,
+      bestScore: hour.score,
+      bestLabel: hour.label
+    });
+    continue;
+  }
+
+  const lastHourTime = new Date(lastWindow.end.time).getTime();
+  const currentHourTime = new Date(hour.time).getTime();
+  const diffInHours = (currentHourTime - lastHourTime) / (1000 * 60 * 60);
+
+  if (diffInHours <= 1.01) {
+    lastWindow.end = hour;
+    if (hour.score > lastWindow.bestScore) {
+      lastWindow.bestScore = hour.score;
+      lastWindow.bestLabel = hour.label;
+    }
+  } else {
+    groupedWindows.push({
+      start: hour,
+      end: hour,
+      bestScore: hour.score,
+      bestLabel: hour.label
+    });
+  }
+}
+
+const fallbackWindows = [...hourlyResults]
+  .sort((a, b) => b.score - a.score)
+  .slice(0, 3)
+  .map(hour => ({
+    start: hour,
+    end: hour,
+    bestScore: hour.score,
+    bestLabel: hour.label
+  }));
+
+const windowsToShow = groupedWindows.length ? groupedWindows.slice(0, 3) : fallbackWindows;
+
+const topHtml = `
+  <div class="top-windows">
+    <h3>Best times to fish today</h3>
+    <ul class="top-windows-list">
+      ${windowsToShow.map(window => {
+        const sameTime = window.start.formattedTime === window.end.formattedTime;
+        const timeText = sameTime
+          ? window.start.formattedTime
+          : `${window.start.formattedTime}–${window.end.formattedTime}`;
+
+        const noteText = sameTime
+          ? `${window.bestLabel} bite window`
+          : `Strong bite window`;
+
+        return `
+          <li class="top-window-card">
+            <div class="top-window-main">
+              <div class="top-window-time">${timeText}</div>
+              <div class="top-window-note">${noteText}</div>
+            </div>
+            <div class="top-window-score ${getBarClass(window.bestLabel)}">
+              ${window.bestScore}
+            </div>
           </li>
-        `).join("")}
-      </ul>
-    </div>
-  `;
+        `;
+      }).join("")}
+    </ul>
+  </div>
+`;
 
   const chartHtml = `
     <div class="hourly-chart-card">
       <h3>Hourly bite chart</h3>
       <div class="hourly-chart" id="hourlyChart">
         ${hourlyResults.map(hour => `
-          <div class="hour-bar-wrap">
-            <div
-              class="hour-bar ${getBarClass(hour.label)}"
-              style="height: ${Math.max(hour.score * 18, 18)}px"
-              data-time="${escapeHtml(hour.formattedTime)}"
-              data-score="${escapeHtml(hour.score)}"
-              data-label="${escapeHtml(hour.label)}"
-              data-temp="${escapeHtml(hour.temperature)}"
-              data-cloud="${escapeHtml(hour.cloudCover)}"
-              data-wind="${escapeHtml(hour.windSpeed)}"
-              data-reasons="${escapeHtml(hour.reasons.join(" | "))}"
-              aria-label="${escapeHtml(hour.formattedTime)}, bite score ${hour.score}, ${hour.label}"
-              tabindex="0"
-            ></div>
-            <div class="hour-label">${hour.formattedTime.replace(":00", "")}</div>
-          </div>
+        <div class="hour-bar-wrap">
+  <div class="hour-score">${hour.score}</div>
+  <div
+    class="hour-bar ${getBarClass(hour.label)}"
+    style="height: ${Math.max(hour.score * 18, 18)}px"
+    data-time="${hour.formattedTime}"
+    data-score="${hour.score}"
+    data-label="${hour.label}"
+    data-temp="${hour.temperature}"
+    data-cloud="${hour.cloudCover}"
+    data-wind="${hour.windSpeed}"
+    data-reasons="${hour.reasons.join(" | ")}"
+    aria-label="${hour.formattedTime}, bite score ${hour.score}, ${hour.label}"
+    tabindex="0"
+  ></div>
+  <div class="hour-label">${hour.formattedTime.replace(":00", "")}</div>
+</div>
         `).join("")}
       </div>
     </div>
