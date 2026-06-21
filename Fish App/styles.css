@@ -208,15 +208,16 @@ li {
 /* Chart */
 
 .hourly-chart {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(28px, 1fr));
-  align-items: end;
+  display: flex;
+  align-items: flex-end;
   gap: 10px;
   min-height: 260px;
   padding: 20px 12px 12px;
   border-radius: 12px;
   background: linear-gradient(to top, #eef4f2 0%, #f8fbfa 100%);
   overflow-x: auto;
+  overflow-y: hidden;
+  flex-wrap: nowrap;
 }
 
 .hour-bar-wrap {
@@ -225,6 +226,7 @@ li {
   align-items: center;
   justify-content: flex-end;
   min-width: 30px;
+  flex: 0 0 30px;
 }
 
 .hour-bar {
@@ -287,4 +289,17 @@ li {
 
 .hidden {
   display: none;
+}
+
+.hourly-chart::-webkit-scrollbar {
+  height: 10px;
+}
+
+.hourly-chart::-webkit-scrollbar-thumb {
+  background: #c8d5cf;
+  border-radius: 999px;
+}
+
+.hourly-chart::-webkit-scrollbar-track {
+  background: transparent;
 }
