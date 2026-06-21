@@ -321,7 +321,7 @@ function renderHourlyForecast(hourlyResults) {
 
     const selectedHour = {
       formattedTime: bar.dataset.time,
-      score: bar.dataset.score,
+      score: Number(bar.dataset.score),
       label: bar.dataset.label,
       temperature: bar.dataset.temp,
       cloudCover: bar.dataset.cloud,
@@ -340,7 +340,7 @@ if (bars.length > 0) {
 
   const selectedHour = {
     formattedTime: firstBar.dataset.time,
-    score: firstBar.dataset.score,
+    score: Number(firstBar.dataset.score),
     label: firstBar.dataset.label,
     temperature: firstBar.dataset.temp,
     cloudCover: firstBar.dataset.cloud,
