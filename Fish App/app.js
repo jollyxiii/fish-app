@@ -46,49 +46,166 @@ function formatHourLabel(timeString) {
   });
 }
 
+function escapeHtml(value) {
+  return String(value)
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;")
+    .replaceAll("'", "&#39;");
+}
+
+function clamp(value, min, max) {
+  return Math.max(min, Math.min(max, value));
+}
+
+function roundValue(value, decimals = 0) {
+  if (value === null || value === undefined || Number.isNaN(value)) return "—";
+  return Number(value).toFixed(decimals);
+}
+
+function getMinutesFromEvent(targetTime, eventTime) {
+  return Math.round((new Date(targetTime) - new Date(eventTime)) / 60000);
+}
+
+function getPressureTrend(hourly, index, lookbackHours = 3) {
+  const previousIndex = index - lookbackHours;
+  if (previousIndex < 0) return null;
+
+  const currentPressure = hourly.pressure_msl?.[index];
+  const previousPressure = hourly.pressure_msl?.[previousIndex];
+
+  if (
+    currentPressure === undefined ||
+    previousPressure === undefined ||
+    currentPressure === null ||
+    previousPressure === null
+  ) {
+    return null;
+  }
+
+  return currentPressure - previousPressure;
+}
+
+function getRollingPrecipitation(hourly, index, lookbackHours = 6) {
+  let total = 0;
+  const start = Math.max(0, index - lookbackHours + 1);
+
+  for (let i = start; i <= index; i++) {
+    total += hourly.precipitation?.[i] ?? 0;
+  }
+
+  return total;
+}
+
 function calculateBiteScore(data, sunrise, sunset) {
   let score = 5;
   const reasons = [];
 
   const temp = data.temperature;
+  const apparentTemp = data.apparentTemperature;
   const cloud = data.cloudCover;
   const wind = data.windSpeed;
-  const time = new Date(data.time);
-  const hour = time.getHours();
+  const humidity = data.relativeHumidity;
+  const precipitation = data.precipitation;
+  const precipProbability = data.precipitationProbability;
+  const pressure = data.pressureMsl;
+  const pressureTrend3h = data.pressureTrend3h;
+  const shortwaveRadiation = data.shortwaveRadiation;
+  const isDay = data.isDay;
+  const minutesFromSunrise = data.minutesFromSunrise;
+  const minutesToSunset = data.minutesToSunset;
+  const hour = new Date(data.time).getHours();
 
-  const sunriseHour = new Date(sunrise).getHours();
-  const sunsetHour = new Date(sunset).getHours();
-
-  if (Math.abs(hour - sunriseHour) <= 1 || Math.abs(hour - sunsetHour) <= 1) {
+  if (Math.abs(minutesFromSunrise) <= 90) {
     score += 2;
-    reasons.push("Close to sunrise or sunset.");
+    reasons.push("Prime low-light window around sunrise.");
   }
 
-  if (cloud >= 30 && cloud <= 70) {
-    score += 1;
-    reasons.push("Moderate cloud cover helps.");
-  } else if (cloud > 85) {
+  if (Math.abs(minutesToSunset) <= 90) {
+    score += 2;
+    reasons.push("Prime low-light window around sunset.");
+  }
+
+  if (hour >= 10 && hour <= 16 && isDay === 1 && shortwaveRadiation >= 600) {
     score -= 1;
-    reasons.push("Very heavy cloud cover may slow activity.");
+    reasons.push("Bright midday sun can push bluegill tighter to cover.");
+  }
+
+  if (cloud >= 25 && cloud <= 70) {
+    score += 1;
+    reasons.push("Moderate cloud cover can extend feeding activity.");
+  } else if (cloud > 90 && precipitation === 0) {
+    score -= 1;
+    reasons.push("Thick overcast without other positives may slow activity.");
   }
 
   if (wind >= 3 && wind <= 10) {
     score += 1;
-    reasons.push("Light to moderate wind helps feeding.");
+    reasons.push("Light to moderate wind can improve feeding.");
   } else if (wind > 15) {
     score -= 1;
-    reasons.push("Strong wind can make feeding less predictable.");
+    reasons.push("Strong wind can make bites less predictable.");
   }
 
-  if (temp >= 65 && temp <= 82) {
+  if (temp >= 68 && temp <= 84) {
     score += 1;
-    reasons.push("Temperature is favorable for bluegill.");
-  } else if (temp < 55 || temp > 90) {
+    reasons.push("Water-warming air temperatures look favorable for bluegill.");
+  } else if (temp < 58 || temp > 92) {
     score -= 2;
-    reasons.push("Temperature is less favorable.");
+    reasons.push("Air temperature is less favorable for active feeding.");
   }
 
-  score = Math.max(1, Math.min(10, score));
+  if (apparentTemp >= 68 && apparentTemp <= 86) {
+    score += 1;
+    reasons.push("Feels-like conditions are in a comfortable feeding range.");
+  } else if (apparentTemp > 95) {
+    score -= 1;
+    reasons.push("High heat can reduce comfortable shallow feeding periods.");
+  }
+
+  if (humidity >= 45 && humidity <= 80) {
+    score += 0.5;
+    reasons.push("Humidity suggests stable enough surface conditions.");
+  }
+
+  if (precipitation > 0 && precipitation <= 0.1) {
+    score += 1;
+    reasons.push("Light rain can improve activity without heavily disturbing the water.");
+  } else if (precipitation > 0.3) {
+    score -= 1;
+    reasons.push("Heavier rain may reduce visibility and bite consistency.");
+  }
+
+  if (precipProbability >= 40 && precipProbability <= 70 && precipitation === 0) {
+    score += 0.5;
+    reasons.push("Pre-storm conditions can sometimes increase feeding.");
+  }
+
+  if (pressure !== null && pressure !== undefined) {
+    if (pressure >= 1008 && pressure <= 1018) {
+      score += 0.5;
+      reasons.push("Pressure is in a relatively fishable range.");
+    } else if (pressure < 1000 || pressure > 1025) {
+      score -= 0.5;
+      reasons.push("Pressure is on the more extreme side.");
+    }
+  }
+
+  if (pressureTrend3h !== null && pressureTrend3h !== undefined) {
+    if (pressureTrend3h <= -1.5) {
+      score += 1;
+      reasons.push("Falling pressure can improve short feeding windows.");
+    } else if (pressureTrend3h >= 2.5) {
+      score -= 1;
+      reasons.push("Rapidly rising pressure can make fish less active.");
+    } else if (pressureTrend3h > -0.75 && pressureTrend3h < 0.75) {
+      score += 0.5;
+      reasons.push("Stable pressure supports predictable behavior.");
+    }
+  }
+
+  score = clamp(Math.round(score), 1, 10);
 
   let label = "Fair";
   if (score >= 8) label = "Excellent";
@@ -104,14 +221,28 @@ function buildHourlyForecast(hourly, sunrise, sunset) {
 
   for (let i = 0; i < hourly.time.length; i++) {
     const timeString = hourly.time[i];
-
     if (!timeString.startsWith(today)) continue;
+
+    const minutesFromSunrise = getMinutesFromEvent(timeString, sunrise);
+    const minutesToSunset = getMinutesFromEvent(sunset, timeString);
 
     const hourData = {
       time: timeString,
       temperature: hourly.temperature_2m[i],
+      apparentTemperature: hourly.apparent_temperature[i],
       cloudCover: hourly.cloud_cover[i],
-      windSpeed: hourly.wind_speed_10m[i]
+      windSpeed: hourly.wind_speed_10m[i],
+      relativeHumidity: hourly.relative_humidity_2m[i],
+      precipitation: hourly.precipitation[i],
+      precipitationProbability: hourly.precipitation_probability[i],
+      pressureMsl: hourly.pressure_msl[i],
+      surfacePressure: hourly.surface_pressure[i],
+      shortwaveRadiation: hourly.shortwave_radiation[i],
+      isDay: hourly.is_day[i],
+      minutesFromSunrise,
+      minutesToSunset,
+      pressureTrend3h: getPressureTrend(hourly, i, 3),
+      precipLast6h: getRollingPrecipitation(hourly, i, 6)
     };
 
     const result = calculateBiteScore(hourData, sunrise, sunset);
@@ -120,8 +251,18 @@ function buildHourlyForecast(hourly, sunrise, sunset) {
       time: timeString,
       formattedTime: formatHourLabel(timeString),
       temperature: hourData.temperature,
+      apparentTemperature: hourData.apparentTemperature,
       cloudCover: hourData.cloudCover,
       windSpeed: hourData.windSpeed,
+      relativeHumidity: hourData.relativeHumidity,
+      precipitation: hourData.precipitation,
+      precipitationProbability: hourData.precipitationProbability,
+      pressureMsl: hourData.pressureMsl,
+      surfacePressure: hourData.surfacePressure,
+      shortwaveRadiation: hourData.shortwaveRadiation,
+      isDay: hourData.isDay,
+      pressureTrend3h: hourData.pressureTrend3h,
+      precipLast6h: hourData.precipLast6h,
       score: result.score,
       label: result.label,
       reasons: result.reasons
@@ -137,35 +278,29 @@ function getBarClass(label) {
   return "tough";
 }
 
-function escapeHtml(value) {
-  return String(value)
-    .replaceAll("&", "&amp;")
-    .replaceAll("<", "&lt;")
-    .replaceAll(">", "&gt;")
-    .replaceAll('"', "&quot;")
-    .replaceAll("'", "&#39;");
-}
-
 function showChartTooltip(bar, event) {
   if (!chartTooltip) return;
 
   const rawReasons = bar.dataset.reasons ? bar.dataset.reasons.split(" | ") : [];
-  const reasons = rawReasons
-    .map(reason => `<li>${escapeHtml(reason)}</li>`)
-    .join("");
+  const reasons = rawReasons.map(reason => `<li>${escapeHtml(reason)}</li>`).join("");
 
   chartTooltip.innerHTML = `
     <strong>${escapeHtml(bar.dataset.time || "")}</strong>
     <div>Bite Score: ${escapeHtml(bar.dataset.score || "")} (${escapeHtml(bar.dataset.label || "")})</div>
     <div>Temp: ${escapeHtml(bar.dataset.temp || "")}°F</div>
+    <div>Feels Like: ${escapeHtml(bar.dataset.apparentTemp || "")}°F</div>
     <div>Cloud Cover: ${escapeHtml(bar.dataset.cloud || "")}%</div>
     <div>Wind: ${escapeHtml(bar.dataset.wind || "")} mph</div>
+    <div>Humidity: ${escapeHtml(bar.dataset.humidity || "")}%</div>
+    <div>Rain: ${escapeHtml(bar.dataset.precip || "")} in</div>
+    <div>Pressure: ${escapeHtml(bar.dataset.pressure || "")} hPa</div>
+    <div>Pressure Trend (3h): ${escapeHtml(bar.dataset.pressureTrend || "")} hPa</div>
     <ul>${reasons}</ul>
   `;
 
   chartTooltip.classList.remove("hidden");
 
-  const tooltipWidth = 240;
+  const tooltipWidth = 260;
   const x = Math.min(event.clientX + 14, window.innerWidth - tooltipWidth - 16);
   const y = Math.max(event.clientY - 20, 16);
 
@@ -280,8 +415,13 @@ function renderHourlyForecast(hourlyResults) {
               data-score="${hour.score}"
               data-label="${hour.label}"
               data-temp="${hour.temperature}"
+              data-apparent-temp="${hour.apparentTemperature}"
               data-cloud="${hour.cloudCover}"
               data-wind="${hour.windSpeed}"
+              data-humidity="${hour.relativeHumidity}"
+              data-precip="${roundValue(hour.precipitation, 2)}"
+              data-pressure="${roundValue(hour.pressureMsl, 1)}"
+              data-pressure-trend="${roundValue(hour.pressureTrend3h, 1)}"
               data-reasons="${hour.reasons.join(" | ")}"
               aria-label="${hour.formattedTime}, bite score ${hour.score}, ${hour.label}"
               tabindex="0"
@@ -298,68 +438,77 @@ function renderHourlyForecast(hourlyResults) {
   const bars = document.querySelectorAll(".hour-bar");
 
   bars.forEach(bar => {
-  bar.addEventListener("mousemove", event => showChartTooltip(bar, event));
-  bar.addEventListener("mouseenter", event => showChartTooltip(bar, event));
-  bar.addEventListener("mouseleave", hideChartTooltip);
+    bar.addEventListener("mousemove", event => showChartTooltip(bar, event));
+    bar.addEventListener("mouseenter", event => showChartTooltip(bar, event));
+    bar.addEventListener("mouseleave", hideChartTooltip);
 
-  bar.addEventListener("focus", () => {
-    const rect = bar.getBoundingClientRect();
-    showChartTooltip(bar, {
-      clientX: rect.left + rect.width / 2,
-      clientY: rect.top
+    bar.addEventListener("focus", () => {
+      const rect = bar.getBoundingClientRect();
+      showChartTooltip(bar, {
+        clientX: rect.left + rect.width / 2,
+        clientY: rect.top
+      });
+    });
+
+    bar.addEventListener("blur", hideChartTooltip);
+
+    bar.addEventListener("click", () => {
+      document.querySelectorAll(".hour-bar.selected").forEach(el => {
+        el.classList.remove("selected");
+      });
+
+      bar.classList.add("selected");
+
+      const selectedHour = {
+        formattedTime: bar.dataset.time,
+        score: Number(bar.dataset.score),
+        label: bar.dataset.label,
+        temperature: bar.dataset.temp,
+        apparentTemperature: bar.dataset.apparentTemp,
+        cloudCover: bar.dataset.cloud,
+        windSpeed: bar.dataset.wind,
+        relativeHumidity: bar.dataset.humidity,
+        precipitation: bar.dataset.precip,
+        pressureMsl: bar.dataset.pressure,
+        pressureTrend3h: bar.dataset.pressureTrend,
+        reasons: bar.dataset.reasons.split(" | ")
+      };
+
+      renderSelectedHour(selectedHour);
     });
   });
 
-  bar.addEventListener("blur", hideChartTooltip);
+  if (bars.length > 0) {
+    let bestBar = bars[0];
 
-  bar.addEventListener("click", () => {
-    document.querySelectorAll(".hour-bar.selected").forEach(el => {
-      el.classList.remove("selected");
+    bars.forEach(bar => {
+      const barScore = Number(bar.dataset.score);
+      const bestScore = Number(bestBar.dataset.score);
+
+      if (barScore > bestScore) {
+        bestBar = bar;
+      }
     });
 
-    bar.classList.add("selected");
+    bestBar.classList.add("selected");
 
     const selectedHour = {
-      formattedTime: bar.dataset.time,
-      score: Number(bar.dataset.score),
-      label: bar.dataset.label,
-      temperature: bar.dataset.temp,
-      cloudCover: bar.dataset.cloud,
-      windSpeed: bar.dataset.wind,
-      reasons: bar.dataset.reasons.split(" | ")
+      formattedTime: bestBar.dataset.time,
+      score: Number(bestBar.dataset.score),
+      label: bestBar.dataset.label,
+      temperature: bestBar.dataset.temp,
+      apparentTemperature: bestBar.dataset.apparentTemp,
+      cloudCover: bestBar.dataset.cloud,
+      windSpeed: bestBar.dataset.wind,
+      relativeHumidity: bestBar.dataset.humidity,
+      precipitation: bestBar.dataset.precip,
+      pressureMsl: bestBar.dataset.pressure,
+      pressureTrend3h: bestBar.dataset.pressureTrend,
+      reasons: bestBar.dataset.reasons.split(" | ")
     };
 
     renderSelectedHour(selectedHour);
-  });
-});
-
-if (bars.length > 0) {
-  let bestBar = bars[0];
-
-  bars.forEach(bar => {
-    const barScore = Number(bar.dataset.score);
-    const bestScore = Number(bestBar.dataset.score);
-
-    if (barScore > bestScore) {
-      bestBar = bar;
-    }
-  });
-
-  bestBar.classList.add("selected");
-
-  const selectedHour = {
-    formattedTime: bestBar.dataset.time,
-    score: Number(bestBar.dataset.score),
-    label: bestBar.dataset.label,
-    temperature: bestBar.dataset.temp,
-    cloudCover: bestBar.dataset.cloud,
-    windSpeed: bestBar.dataset.wind,
-    reasons: bestBar.dataset.reasons.split(" | ")
-  };
-
-  renderSelectedHour(selectedHour);
-}
-  
+  }
 }
 
 function updateScoreLabelStyle(label) {
@@ -413,6 +562,11 @@ function renderSelectedHour(hour) {
       </div>
 
       <div class="selected-hour-stat">
+        <div class="selected-hour-stat-label">Feels Like</div>
+        <div class="selected-hour-stat-value">${hour.apparentTemperature}°F</div>
+      </div>
+
+      <div class="selected-hour-stat">
         <div class="selected-hour-stat-label">Cloud Cover</div>
         <div class="selected-hour-stat-value">${hour.cloudCover}%</div>
       </div>
@@ -423,8 +577,23 @@ function renderSelectedHour(hour) {
       </div>
 
       <div class="selected-hour-stat">
-        <div class="selected-hour-stat-label">Bite Label</div>
-        <div class="selected-hour-stat-value">${hour.label}</div>
+        <div class="selected-hour-stat-label">Humidity</div>
+        <div class="selected-hour-stat-value">${hour.relativeHumidity}%</div>
+      </div>
+
+      <div class="selected-hour-stat">
+        <div class="selected-hour-stat-label">Rain</div>
+        <div class="selected-hour-stat-value">${hour.precipitation} in</div>
+      </div>
+
+      <div class="selected-hour-stat">
+        <div class="selected-hour-stat-label">Pressure</div>
+        <div class="selected-hour-stat-value">${hour.pressureMsl} hPa</div>
+      </div>
+
+      <div class="selected-hour-stat">
+        <div class="selected-hour-stat-label">Pressure Trend (3h)</div>
+        <div class="selected-hour-stat-value">${hour.pressureTrend3h} hPa</div>
       </div>
     </div>
 
@@ -488,10 +657,11 @@ async function getForecast() {
     `https://api.open-meteo.com/v1/forecast` +
     `?latitude=${selectedSpot.lat}` +
     `&longitude=${selectedSpot.lon}` +
-    `&hourly=temperature_2m,cloud_cover,wind_speed_10m` +
+    `&hourly=temperature_2m,apparent_temperature,relative_humidity_2m,precipitation,precipitation_probability,cloud_cover,pressure_msl,surface_pressure,wind_speed_10m,is_day,shortwave_radiation` +
     `&daily=sunrise,sunset` +
     `&temperature_unit=fahrenheit` +
     `&wind_speed_unit=mph` +
+    `&precipitation_unit=inch` +
     `&timezone=auto`;
 
   try {
@@ -520,8 +690,20 @@ async function getForecast() {
     const currentData = {
       time: hourly.time[hourIndex],
       temperature: hourly.temperature_2m[hourIndex],
+      apparentTemperature: hourly.apparent_temperature[hourIndex],
+      relativeHumidity: hourly.relative_humidity_2m[hourIndex],
+      precipitation: hourly.precipitation[hourIndex],
+      precipitationProbability: hourly.precipitation_probability[hourIndex],
       cloudCover: hourly.cloud_cover[hourIndex],
-      windSpeed: hourly.wind_speed_10m[hourIndex]
+      pressureMsl: hourly.pressure_msl[hourIndex],
+      surfacePressure: hourly.surface_pressure[hourIndex],
+      windSpeed: hourly.wind_speed_10m[hourIndex],
+      isDay: hourly.is_day[hourIndex],
+      shortwaveRadiation: hourly.shortwave_radiation[hourIndex],
+      minutesFromSunrise: getMinutesFromEvent(hourly.time[hourIndex], sunrise),
+      minutesToSunset: getMinutesFromEvent(sunset, hourly.time[hourIndex]),
+      pressureTrend3h: getPressureTrend(hourly, hourIndex, 3),
+      precipLast6h: getRollingPrecipitation(hourly, hourIndex, 6)
     };
 
     const currentResult = calculateBiteScore(currentData, sunrise, sunset);
@@ -530,9 +712,14 @@ async function getForecast() {
     weatherOutput.innerHTML = `
       <p><strong>Spot:</strong> ${selectedSpot.name}</p>
       <p><strong>Forecast Time:</strong> ${new Date(currentData.time).toLocaleString()}</p>
-      <p><strong>Temperature:</strong> ${currentData.temperature}°F</p>
-      <p><strong>Cloud Cover:</strong> ${currentData.cloudCover}%</p>
-      <p><strong>Wind Speed:</strong> ${currentData.windSpeed} mph</p>
+      <p><strong>Temperature:</strong> ${roundValue(currentData.temperature, 0)}°F</p>
+      <p><strong>Feels Like:</strong> ${roundValue(currentData.apparentTemperature, 0)}°F</p>
+      <p><strong>Cloud Cover:</strong> ${roundValue(currentData.cloudCover, 0)}%</p>
+      <p><strong>Wind Speed:</strong> ${roundValue(currentData.windSpeed, 0)} mph</p>
+      <p><strong>Humidity:</strong> ${roundValue(currentData.relativeHumidity, 0)}%</p>
+      <p><strong>Rain:</strong> ${roundValue(currentData.precipitation, 2)} in</p>
+      <p><strong>Pressure:</strong> ${roundValue(currentData.pressureMsl, 1)} hPa</p>
+      <p><strong>Pressure Trend (3h):</strong> ${roundValue(currentData.pressureTrend3h, 1)} hPa</p>
       <p><strong>Sunrise:</strong> ${new Date(sunrise).toLocaleTimeString()}</p>
       <p><strong>Sunset:</strong> ${new Date(sunset).toLocaleTimeString()}</p>
     `;
@@ -564,6 +751,5 @@ async function getForecast() {
 }
 
 scoreHelp.classList.add("neutral-state");
-
 populateSpots();
 forecastBtn.addEventListener("click", getForecast);
