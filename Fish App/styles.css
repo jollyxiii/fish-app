@@ -367,3 +367,67 @@ hour-score {
   margin-bottom: 6px;
   min-height: 14px;
 }
+
+.score-help {
+  margin-top: 18px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  padding: 10px 14px;
+  border-radius: 999px;
+  font-size: 0.95rem;
+  font-weight: 600;
+  background: #edf3f1;
+  color: var(--muted);
+  border: 1px solid var(--border);
+}
+
+.score-help::before {
+  content: "";
+  width: 10px;
+  height: 10px;
+  border-radius: 999px;
+  background: #9aa9a2;
+  flex-shrink: 0;
+}
+
+.score-help.good-state {
+  background: #e9f6ec;
+  color: var(--good);
+  border-color: #cfe8d5;
+}
+
+.score-help.good-state::before {
+  background: var(--good);
+}
+
+.score-help.fair-state {
+  background: #fbf4e5;
+  color: var(--fair);
+  border-color: #edd9a8;
+}
+
+.score-help.fair-state::before {
+  background: var(--fair);
+}
+
+.score-help.tough-state {
+  background: #fbecef;
+  color: var(--tough);
+  border-color: #efc8cf;
+}
+
+.score-help.tough-state::before {
+  background: var(--tough);
+}
+
+.score-help.neutral-state {
+  background: #edf3f1;
+  color: var(--muted);
+  border-color: var(--border);
+}
+
+.score-help.neutral-state::before {
+  background: #9aa9a2;
+}

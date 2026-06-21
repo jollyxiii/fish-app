@@ -3,6 +3,7 @@ const forecastBtn = document.getElementById("forecastBtn");
 const weatherOutput = document.getElementById("weatherOutput");
 const scoreOutput = document.getElementById("scoreOutput");
 const scoreLabel = document.getElementById("scoreLabel");
+const scoreHelp = document.getElementById("scoreHelp");
 const reasonOutput = document.getElementById("reasonOutput");
 const hourlyOutput = document.getElementById("hourlyOutput");
 const chartTooltip = document.getElementById("chartTooltip");
@@ -183,109 +184,109 @@ function renderHourlyForecast(hourlyResults) {
     return;
   }
 
-const strongHours = [...hourlyResults]
-  .filter(hour => hour.score >= 8)
-  .sort((a, b) => a.time - b.time);
+  const strongHours = [...hourlyResults]
+    .filter(hour => hour.score >= 8)
+    .sort((a, b) => a.time.localeCompare(b.time));
 
-const groupedWindows = [];
+  const groupedWindows = [];
 
-for (const hour of strongHours) {
-  const lastWindow = groupedWindows[groupedWindows.length - 1];
+  for (const hour of strongHours) {
+    const lastWindow = groupedWindows[groupedWindows.length - 1];
 
-  if (!lastWindow) {
-    groupedWindows.push({
-      start: hour,
-      end: hour,
-      bestScore: hour.score,
-      bestLabel: hour.label
-    });
-    continue;
-  }
-
-  const lastHourTime = new Date(lastWindow.end.time).getTime();
-  const currentHourTime = new Date(hour.time).getTime();
-  const diffInHours = (currentHourTime - lastHourTime) / (1000 * 60 * 60);
-
-  if (diffInHours <= 1.01) {
-    lastWindow.end = hour;
-    if (hour.score > lastWindow.bestScore) {
-      lastWindow.bestScore = hour.score;
-      lastWindow.bestLabel = hour.label;
+    if (!lastWindow) {
+      groupedWindows.push({
+        start: hour,
+        end: hour,
+        bestScore: hour.score,
+        bestLabel: hour.label
+      });
+      continue;
     }
-  } else {
-    groupedWindows.push({
+
+    const lastHourTime = new Date(lastWindow.end.time).getTime();
+    const currentHourTime = new Date(hour.time).getTime();
+    const diffInHours = (currentHourTime - lastHourTime) / (1000 * 60 * 60);
+
+    if (diffInHours <= 1.01) {
+      lastWindow.end = hour;
+      if (hour.score > lastWindow.bestScore) {
+        lastWindow.bestScore = hour.score;
+        lastWindow.bestLabel = hour.label;
+      }
+    } else {
+      groupedWindows.push({
+        start: hour,
+        end: hour,
+        bestScore: hour.score,
+        bestLabel: hour.label
+      });
+    }
+  }
+
+  const fallbackWindows = [...hourlyResults]
+    .sort((a, b) => b.score - a.score)
+    .slice(0, 3)
+    .map(hour => ({
       start: hour,
       end: hour,
       bestScore: hour.score,
       bestLabel: hour.label
-    });
-  }
-}
+    }));
 
-const fallbackWindows = [...hourlyResults]
-  .sort((a, b) => b.score - a.score)
-  .slice(0, 3)
-  .map(hour => ({
-    start: hour,
-    end: hour,
-    bestScore: hour.score,
-    bestLabel: hour.label
-  }));
+  const windowsToShow = groupedWindows.length ? groupedWindows.slice(0, 3) : fallbackWindows;
 
-const windowsToShow = groupedWindows.length ? groupedWindows.slice(0, 3) : fallbackWindows;
+  const topHtml = `
+    <div class="top-windows">
+      <h3>Best times to fish today</h3>
+      <ul class="top-windows-list">
+        ${windowsToShow.map(window => {
+          const sameTime = window.start.formattedTime === window.end.formattedTime;
+          const timeText = sameTime
+            ? window.start.formattedTime
+            : `${window.start.formattedTime}–${window.end.formattedTime}`;
 
-const topHtml = `
-  <div class="top-windows">
-    <h3>Best times to fish today</h3>
-    <ul class="top-windows-list">
-      ${windowsToShow.map(window => {
-        const sameTime = window.start.formattedTime === window.end.formattedTime;
-        const timeText = sameTime
-          ? window.start.formattedTime
-          : `${window.start.formattedTime}–${window.end.formattedTime}`;
+          const noteText = sameTime
+            ? `${window.bestLabel} bite window`
+            : `Strong bite window`;
 
-        const noteText = sameTime
-          ? `${window.bestLabel} bite window`
-          : `Strong bite window`;
-
-        return `
-          <li class="top-window-card">
-            <div class="top-window-main">
-              <div class="top-window-time">${timeText}</div>
-              <div class="top-window-note">${noteText}</div>
-            </div>
-            <div class="top-window-score ${getBarClass(window.bestLabel)}">
-              ${window.bestScore}
-            </div>
-          </li>
-        `;
-      }).join("")}
-    </ul>
-  </div>
-`;
+          return `
+            <li class="top-window-card">
+              <div class="top-window-main">
+                <div class="top-window-time">${timeText}</div>
+                <div class="top-window-note">${noteText}</div>
+              </div>
+              <div class="top-window-score ${getBarClass(window.bestLabel)}">
+                ${window.bestScore}
+              </div>
+            </li>
+          `;
+        }).join("")}
+      </ul>
+    </div>
+  `;
 
   const chartHtml = `
     <div class="hourly-chart-card">
       <h3>Hourly bite chart</h3>
       <div class="hourly-chart" id="hourlyChart">
         ${hourlyResults.map(hour => `
-        <div class="hour-bar-wrap">
-  <div class="hour-score">${hour.score}</div>
-  <div
-    class="hour-bar ${getBarClass(hour.label)}"
-    style="height: ${Math.max(hour.score * 18, 18)}px"
-    data-time="${hour.formattedTime}"
-    data-score="${hour.score}"
-    data-label="${hour.label}"
-    data-temp="${hour.temperature}"
-    data-cloud="${hour.cloudCover}"
-    data-wind="${hour.windSpeed}"
-    data-reasons="${hour.reasons.join(" | ")}"
-    aria-label="${hour.formattedTime}, bite score ${hour.score}, ${hour.label}"
-    tabindex="0"
-  ></div>
-  <div class="hour-label">${hour.formattedTime.replace(":00", "")}</div>
-</div>
+          <div class="hour-bar-wrap">
+            <div class="hour-score">${hour.score}</div>
+            <div
+              class="hour-bar ${getBarClass(hour.label)}"
+              style="height: ${Math.max(hour.score * 18, 18)}px"
+              data-time="${hour.formattedTime}"
+              data-score="${hour.score}"
+              data-label="${hour.label}"
+              data-temp="${hour.temperature}"
+              data-cloud="${hour.cloudCover}"
+              data-wind="${hour.windSpeed}"
+              data-reasons="${hour.reasons.join(" | ")}"
+              aria-label="${hour.formattedTime}, bite score ${hour.score}, ${hour.label}"
+              tabindex="0"
+            ></div>
+            <div class="hour-label">${hour.formattedTime.replace(":00", "")}</div>
+          </div>
         `).join("")}
       </div>
     </div>
@@ -324,6 +325,24 @@ function updateScoreLabelStyle(label) {
   }
 }
 
+function updateScoreHelp(score, label) {
+  scoreHelp.classList.remove("good-state", "fair-state", "tough-state", "neutral-state");
+
+  if (label === "Excellent" || label === "Good") {
+    scoreHelp.textContent = "Strong conditions — worth planning around this window.";
+    scoreHelp.classList.add("good-state");
+  } else if (label === "Fair") {
+    scoreHelp.textContent = "Decent conditions — fishable, but not peak activity.";
+    scoreHelp.classList.add("fair-state");
+  } else if (label === "Tough" || label === "Poor") {
+    scoreHelp.textContent = "Slow conditions — you may need patience or a backup plan.";
+    scoreHelp.classList.add("tough-state");
+  } else {
+    scoreHelp.textContent = "Pick a spot and load the forecast.";
+    scoreHelp.classList.add("neutral-state");
+  }
+}
+
 async function getForecast() {
   const selectedSpot = spots[Number(spotSelect.value)];
 
@@ -332,12 +351,20 @@ async function getForecast() {
   scoreOutput.textContent = "--";
   scoreLabel.textContent = "Calculating...";
   scoreLabel.classList.remove("good", "fair", "tough");
+  scoreHelp.textContent = "Checking current conditions...";
+  scoreHelp.classList.remove("good-state", "fair-state", "tough-state", "neutral-state");
+  scoreHelp.classList.add("neutral-state");
   reasonOutput.innerHTML = "<p>Checking conditions...</p>";
   hourlyOutput.innerHTML = "<p>Building hourly forecast...</p>";
 
   if (!selectedSpot) {
     weatherOutput.innerHTML = "<p>No spot was selected.</p>";
+    scoreOutput.textContent = "--";
     scoreLabel.textContent = "Error";
+    scoreLabel.classList.remove("good", "fair", "tough");
+    scoreHelp.textContent = "Please choose a valid fishing spot.";
+    scoreHelp.classList.remove("good-state", "fair-state", "tough-state", "neutral-state");
+    scoreHelp.classList.add("neutral-state");
     reasonOutput.innerHTML = "<p>Please choose a valid spot.</p>";
     hourlyOutput.innerHTML = "<p>No hourly forecast available.</p>";
     return;
@@ -357,6 +384,10 @@ async function getForecast() {
     `;
     scoreOutput.textContent = "--";
     scoreLabel.textContent = "Error";
+    scoreLabel.classList.remove("good", "fair", "tough");
+    scoreHelp.textContent = "Check your spots.js file for missing coordinates.";
+    scoreHelp.classList.remove("good-state", "fair-state", "tough-state", "neutral-state");
+    scoreHelp.classList.add("neutral-state");
     reasonOutput.innerHTML = "<p>Check your spots.js file.</p>";
     hourlyOutput.innerHTML = "<p>No hourly forecast available.</p>";
     return;
@@ -418,6 +449,7 @@ async function getForecast() {
     scoreOutput.textContent = currentResult.score;
     scoreLabel.textContent = currentResult.label;
     updateScoreLabelStyle(currentResult.label);
+    updateScoreHelp(currentResult.score, currentResult.label);
 
     reasonOutput.innerHTML = `
       <ul>
@@ -432,10 +464,15 @@ async function getForecast() {
     scoreOutput.textContent = "--";
     scoreLabel.textContent = "Error";
     scoreLabel.classList.remove("good", "fair", "tough");
+    scoreHelp.textContent = "Could not load forecast data right now.";
+    scoreHelp.classList.remove("good-state", "fair-state", "tough-state", "neutral-state");
+    scoreHelp.classList.add("neutral-state");
     reasonOutput.innerHTML = `<p>${error.message}</p>`;
     hourlyOutput.innerHTML = "<p>No hourly forecast available.</p>";
   }
 }
+
+scoreHelp.classList.add("neutral-state");
 
 populateSpots();
 forecastBtn.addEventListener("click", getForecast);
