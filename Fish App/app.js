@@ -9,6 +9,17 @@ const hourlyOutput = document.getElementById("hourlyOutput");
 const chartTooltip = document.getElementById("chartTooltip");
 const selectedHourDetails = document.getElementById("selectedHourDetails");
 
+const MOON_SCORING = {
+  fullNewBoost: 0.5,
+  nearPhaseBoost: 0.25,
+  majorBoost: 1,
+  minorBoost: 0.5,
+  overlapBoost: 0.5,
+  maxTotalBoost: 1.5,
+  majorWindowMinutes: 90,
+  minorWindowMinutes: 60
+};
+
 function populateSpots() {
   spotSelect.innerHTML = "";
 
@@ -64,8 +75,16 @@ function roundValue(value, decimals = 0) {
   return Number(value).toFixed(decimals);
 }
 
+function getMinutesDifference(a, b) {
+  return Math.round((new Date(a) - new Date(b)) / 60000);
+}
+
 function getMinutesFromEvent(targetTime, eventTime) {
   return Math.round((new Date(targetTime) - new Date(eventTime)) / 60000);
+}
+
+function getMinutesUntilEvent(eventTime, targetTime) {
+  return Math.round((new Date(eventTime) - new Date(targetTime)) / 60000);
 }
 
 function getPressureTrend(hourly, index, lookbackHours = 3) {
@@ -96,6 +115,177 @@ function getRollingPrecipitation(hourly, index, lookbackHours = 6) {
   }
 
   return total;
+}
+
+function toIsoLocalDate(date = new Date()) {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
+}
+
+function normalizeUsnoTimeString(value) {
+  if (!value || typeof value !== "string") return null;
+  const cleaned = value.trim().toLowerCase();
+  if (
+    cleaned === "none" ||
+    cleaned === "n/a" ||
+    cleaned === "----" ||
+    cleaned === "--:--"
+  ) {
+    return null;
+  }
+
+  const match = cleaned.match(/^(\d{1,2}):(\d{2})\s*([ap]m)?$/i);
+  if (!match) return null;
+
+  let hour = Number(match[1]);
+  const minute = Number(match[2]);
+  const suffix = match[3];
+
+  if (suffix) {
+    const meridiem = suffix.toLowerCase();
+    if (meridiem === "pm" && hour !== 12) hour += 12;
+    if (meridiem === "am" && hour === 12) hour = 0;
+  }
+
+  return { hour, minute };
+}
+
+function buildLocalIsoFromDateAndUsnoTime(dateString, usnoTime) {
+  const parsed = normalizeUsnoTimeString(usnoTime);
+  if (!parsed) return null;
+  const { hour, minute } = parsed;
+  return `${dateString}T${String(hour).padStart(2, "0")}:${String(minute).padStart(2, "0")}`;
+}
+
+function getPhaseBoost(phaseName = "", illumination = null) {
+  const phase = phaseName.toLowerCase();
+  let boost = 0;
+  const reasons = [];
+
+  const isFullLike = phase.includes("full");
+  const isNewLike = phase.includes("new");
+
+  if (isFullLike || isNewLike) {
+    boost += MOON_SCORING.fullNewBoost;
+    reasons.push("Moon phase is near a stronger full/new moon period.");
+  } else if (illumination !== null && (illumination <= 15 || illumination >= 85)) {
+    boost += MOON_SCORING.nearPhaseBoost;
+    reasons.push("Moon illumination is near a stronger solunar range.");
+  }
+
+  return { boost, reasons };
+}
+
+function isWithinWindow(targetTime, centerTime, windowMinutes) {
+  if (!centerTime) return false;
+  return Math.abs(getMinutesDifference(targetTime, centerTime)) <= windowMinutes;
+}
+
+function buildSolunarDataForDate(dateString, moonData) {
+  const moonrise = moonData.moonrise || null;
+  const moonset = moonData.moonset || null;
+  const transit = moonData.transit || null;
+
+  const underfoot = transit
+    ? new Date(new Date(transit).getTime() + 12 * 60 * 60 * 1000)
+    : null;
+
+  const underfootIso = underfoot
+    ? `${underfoot.getFullYear()}-${String(underfoot.getMonth() + 1).padStart(2, "0")}-${String(underfoot.getDate()).padStart(2, "0")}T${String(underfoot.getHours()).padStart(2, "0")}:${String(underfoot.getMinutes()).padStart(2, "0")}`
+    : null;
+
+  return {
+    majorPeriods: [
+      transit
+        ? {
+            type: "Moon overhead",
+            center: transit,
+            start: new Date(new Date(transit).getTime() - MOON_SCORING.majorWindowMinutes * 60000).toISOString(),
+            end: new Date(new Date(transit).getTime() + MOON_SCORING.majorWindowMinutes * 60000).toISOString()
+          }
+        : null,
+      underfootIso
+        ? {
+            type: "Moon underfoot",
+            center: underfootIso,
+            start: new Date(new Date(underfootIso).getTime() - MOON_SCORING.majorWindowMinutes * 60000).toISOString(),
+            end: new Date(new Date(underfootIso).getTime() + MOON_SCORING.majorWindowMinutes * 60000).toISOString()
+          }
+        : null
+    ].filter(Boolean),
+    minorPeriods: [
+      moonrise
+        ? {
+            type: "Moonrise",
+            center: moonrise,
+            start: new Date(new Date(moonrise).getTime() - MOON_SCORING.minorWindowMinutes * 60000).toISOString(),
+            end: new Date(new Date(moonrise).getTime() + MOON_SCORING.minorWindowMinutes * 60000).toISOString()
+          }
+        : null,
+      moonset
+        ? {
+            type: "Moonset",
+            center: moonset,
+            start: new Date(new Date(moonset).getTime() - MOON_SCORING.minorWindowMinutes * 60000).toISOString(),
+            end: new Date(new Date(moonset).getTime() + MOON_SCORING.minorWindowMinutes * 60000).toISOString()
+          }
+        : null
+    ].filter(Boolean)
+  };
+}
+
+function getSolunarBoost(data) {
+  let boost = 0;
+  const reasons = [];
+  let isMajorSolunar = false;
+  let isMinorSolunar = false;
+  let majorType = "";
+  let minorType = "";
+
+  if (data.solunarData?.majorPeriods?.length) {
+    for (const period of data.solunarData.majorPeriods) {
+      if (isWithinWindow(data.time, period.center, MOON_SCORING.majorWindowMinutes)) {
+        boost += MOON_SCORING.majorBoost;
+        isMajorSolunar = true;
+        majorType = period.type;
+        reasons.push(`Major solunar window: ${period.type}.`);
+        break;
+      }
+    }
+  }
+
+  if (data.solunarData?.minorPeriods?.length) {
+    for (const period of data.solunarData.minorPeriods) {
+      if (isWithinWindow(data.time, period.center, MOON_SCORING.minorWindowMinutes)) {
+        boost += MOON_SCORING.minorBoost;
+        isMinorSolunar = true;
+        minorType = period.type;
+        reasons.push(`Minor solunar window: ${period.type}.`);
+        break;
+      }
+    }
+  }
+
+  const nearSunrise = Math.abs(data.minutesFromSunrise) <= 90;
+  const nearSunset = Math.abs(data.minutesToSunset) <= 90;
+
+  if (isMajorSolunar && (nearSunrise || nearSunset)) {
+    boost += MOON_SCORING.overlapBoost;
+    reasons.push("Major solunar timing overlaps with a low-light feeding window.");
+  }
+
+  boost = Math.min(boost, MOON_SCORING.maxTotalBoost);
+
+  return {
+    boost,
+    reasons,
+    isMajorSolunar,
+    isMinorSolunar,
+    majorType,
+    minorType
+  };
 }
 
 function calculateBiteScore(data, sunrise, sunset) {
@@ -205,6 +395,17 @@ function calculateBiteScore(data, sunrise, sunset) {
     }
   }
 
+  const phaseResult = getPhaseBoost(
+    data.moonData?.phaseName,
+    data.moonData?.illumination
+  );
+  score += phaseResult.boost;
+  reasons.push(...phaseResult.reasons);
+
+  const solunarResult = getSolunarBoost(data);
+  score += solunarResult.boost;
+  reasons.push(...solunarResult.reasons);
+
   score = clamp(Math.round(score), 1, 10);
 
   let label = "Fair";
@@ -212,10 +413,19 @@ function calculateBiteScore(data, sunrise, sunset) {
   else if (score >= 6) label = "Good";
   else if (score <= 3) label = "Tough";
 
-  return { score, label, reasons };
+  return {
+    score,
+    label,
+    reasons,
+    moonBoost: clamp(phaseResult.boost + solunarResult.boost, 0, MOON_SCORING.maxTotalBoost),
+    isMajorSolunar: solunarResult.isMajorSolunar,
+    isMinorSolunar: solunarResult.isMinorSolunar,
+    majorType: solunarResult.majorType,
+    minorType: solunarResult.minorType
+  };
 }
 
-function buildHourlyForecast(hourly, sunrise, sunset) {
+function buildHourlyForecast(hourly, sunrise, sunset, moonData, solunarData) {
   const today = getTodayDateString();
   const hourlyResults = [];
 
@@ -224,7 +434,7 @@ function buildHourlyForecast(hourly, sunrise, sunset) {
     if (!timeString.startsWith(today)) continue;
 
     const minutesFromSunrise = getMinutesFromEvent(timeString, sunrise);
-    const minutesToSunset = getMinutesFromEvent(sunset, timeString);
+    const minutesToSunset = getMinutesUntilEvent(sunset, timeString);
 
     const hourData = {
       time: timeString,
@@ -242,7 +452,9 @@ function buildHourlyForecast(hourly, sunrise, sunset) {
       minutesFromSunrise,
       minutesToSunset,
       pressureTrend3h: getPressureTrend(hourly, i, 3),
-      precipLast6h: getRollingPrecipitation(hourly, i, 6)
+      precipLast6h: getRollingPrecipitation(hourly, i, 6),
+      moonData,
+      solunarData
     };
 
     const result = calculateBiteScore(hourData, sunrise, sunset);
@@ -265,7 +477,17 @@ function buildHourlyForecast(hourly, sunrise, sunset) {
       precipLast6h: hourData.precipLast6h,
       score: result.score,
       label: result.label,
-      reasons: result.reasons
+      reasons: result.reasons,
+      moonBoost: result.moonBoost,
+      isMajorSolunar: result.isMajorSolunar,
+      isMinorSolunar: result.isMinorSolunar,
+      majorType: result.majorType,
+      minorType: result.minorType,
+      moonPhase: moonData?.phaseName || "Unknown",
+      moonIllumination: moonData?.illumination,
+      moonrise: moonData?.moonrise,
+      moonset: moonData?.moonset,
+      moonTransit: moonData?.transit
     });
   }
 
@@ -276,6 +498,69 @@ function getBarClass(label) {
   if (label === "Excellent" || label === "Good") return "good";
   if (label === "Fair") return "fair";
   return "tough";
+}
+
+function formatMaybeTime(isoString) {
+  if (!isoString) return "—";
+  const d = new Date(isoString);
+  if (Number.isNaN(d.getTime())) return "—";
+  return d.toLocaleTimeString([], {
+    hour: "numeric",
+    minute: "2-digit"
+  });
+}
+
+async function fetchMoonDataForToday(lat, lon) {
+  const today = toIsoLocalDate(new Date());
+  const usnoUrl =
+    `https://aa.usno.navy.mil/api/rstt/oneday?date=${today}&coords=${lat},${lon}&tz=0&id=bluegill`;
+
+  const response = await fetch(usnoUrl);
+  const moonJson = await response.json();
+
+  if (!response.ok) {
+    throw new Error("Moon data request failed.");
+  }
+
+  const data = moonJson?.properties?.data;
+
+  if (!data) {
+    throw new Error("Moon data response was missing properties.data.");
+  }
+
+  const phaseName = data.curphase || data.closestphase?.phase || "Unknown";
+
+  let illumination = null;
+  if (data.fracillum !== undefined && data.fracillum !== null) {
+    const numeric = Number(String(data.fracillum).replace("%", ""));
+    illumination = Number.isNaN(numeric) ? null : numeric;
+  }
+
+  let moonrise = null;
+  let moonset = null;
+
+  const moonEvents = Array.isArray(data.moondata) ? data.moondata : [];
+
+  for (const event of moonEvents) {
+    const phen = String(event?.phen || "").toLowerCase();
+    const time = event?.time || null;
+    if (!time) continue;
+
+    if (phen === "rise") {
+      moonrise = buildLocalIsoFromDateAndUsnoTime(today, time);
+    } else if (phen === "set") {
+      moonset = buildLocalIsoFromDateAndUsnoTime(today, time);
+    }
+  }
+
+  return {
+    phaseName,
+    illumination,
+    moonrise,
+    moonset,
+    transit: null,
+    raw: moonJson
+  };
 }
 
 function showChartTooltip(bar, event) {
@@ -295,12 +580,16 @@ function showChartTooltip(bar, event) {
     <div>Rain: ${escapeHtml(bar.dataset.precip || "")} in</div>
     <div>Pressure: ${escapeHtml(bar.dataset.pressure || "")} hPa</div>
     <div>Pressure Trend (3h): ${escapeHtml(bar.dataset.pressureTrend || "")} hPa</div>
+    <div>Moon Phase: ${escapeHtml(bar.dataset.moonPhase || "")}</div>
+    <div>Moon Illumination: ${escapeHtml(bar.dataset.moonIllumination || "")}%</div>
+    <div>Moon Boost: +${escapeHtml(bar.dataset.moonBoost || "0")}</div>
+    <div>Solunar: ${escapeHtml(bar.dataset.solunar || "None")}</div>
     <ul>${reasons}</ul>
   `;
 
   chartTooltip.classList.remove("hidden");
 
-  const tooltipWidth = 260;
+  const tooltipWidth = 280;
   const x = Math.min(event.clientX + 14, window.innerWidth - tooltipWidth - 16);
   const y = Math.max(event.clientY - 20, 16);
 
@@ -381,9 +670,16 @@ function renderHourlyForecast(hourlyResults) {
             ? window.start.formattedTime
             : `${window.start.formattedTime}–${window.end.formattedTime}`;
 
+          const solunarText =
+            window.start.isMajorSolunar
+              ? ` · ${window.start.majorType}`
+              : window.start.isMinorSolunar
+              ? ` · ${window.start.minorType}`
+              : "";
+
           const noteText = sameTime
-            ? `${window.bestLabel} bite window`
-            : `Strong bite window`;
+            ? `${window.bestLabel} bite window${solunarText}`
+            : `Strong bite window${solunarText}`;
 
           return `
             <li class="top-window-card">
@@ -405,30 +701,42 @@ function renderHourlyForecast(hourlyResults) {
     <div class="hourly-chart-card">
       <h3>Hourly bite chart</h3>
       <div class="hourly-chart" id="hourlyChart">
-        ${hourlyResults.map(hour => `
-          <div class="hour-bar-wrap">
-            <div class="hour-score">${hour.score}</div>
-            <div
-              class="hour-bar ${getBarClass(hour.label)}"
-              style="height: ${Math.max(hour.score * 18, 18)}px"
-              data-time="${hour.formattedTime}"
-              data-score="${hour.score}"
-              data-label="${hour.label}"
-              data-temp="${hour.temperature}"
-              data-apparent-temp="${hour.apparentTemperature}"
-              data-cloud="${hour.cloudCover}"
-              data-wind="${hour.windSpeed}"
-              data-humidity="${hour.relativeHumidity}"
-              data-precip="${roundValue(hour.precipitation, 2)}"
-              data-pressure="${roundValue(hour.pressureMsl, 1)}"
-              data-pressure-trend="${roundValue(hour.pressureTrend3h, 1)}"
-              data-reasons="${hour.reasons.join(" | ")}"
-              aria-label="${hour.formattedTime}, bite score ${hour.score}, ${hour.label}"
-              tabindex="0"
-            ></div>
-            <div class="hour-label">${hour.formattedTime.replace(":00", "")}</div>
-          </div>
-        `).join("")}
+        ${hourlyResults.map(hour => {
+          const solunarLabel = hour.isMajorSolunar
+            ? hour.majorType
+            : hour.isMinorSolunar
+            ? hour.minorType
+            : "None";
+
+          return `
+            <div class="hour-bar-wrap">
+              <div class="hour-score">${hour.score}</div>
+              <div
+                class="hour-bar ${getBarClass(hour.label)} ${hour.isMajorSolunar ? "solunar-major" : ""} ${hour.isMinorSolunar ? "solunar-minor" : ""}"
+                style="height: ${Math.max(hour.score * 18, 18)}px"
+                data-time="${hour.formattedTime}"
+                data-score="${hour.score}"
+                data-label="${hour.label}"
+                data-temp="${hour.temperature}"
+                data-apparent-temp="${hour.apparentTemperature}"
+                data-cloud="${hour.cloudCover}"
+                data-wind="${hour.windSpeed}"
+                data-humidity="${hour.relativeHumidity}"
+                data-precip="${roundValue(hour.precipitation, 2)}"
+                data-pressure="${roundValue(hour.pressureMsl, 1)}"
+                data-pressure-trend="${roundValue(hour.pressureTrend3h, 1)}"
+                data-moon-phase="${hour.moonPhase}"
+                data-moon-illumination="${roundValue(hour.moonIllumination, 0)}"
+                data-moon-boost="${roundValue(hour.moonBoost, 2)}"
+                data-solunar="${solunarLabel}"
+                data-reasons="${hour.reasons.join(" | ")}"
+                aria-label="${hour.formattedTime}, bite score ${hour.score}, ${hour.label}"
+                tabindex="0"
+              ></div>
+              <div class="hour-label">${hour.formattedTime.replace(":00", "")}</div>
+            </div>
+          `;
+        }).join("")}
       </div>
     </div>
   `;
@@ -471,6 +779,10 @@ function renderHourlyForecast(hourlyResults) {
         precipitation: bar.dataset.precip,
         pressureMsl: bar.dataset.pressure,
         pressureTrend3h: bar.dataset.pressureTrend,
+        moonPhase: bar.dataset.moonPhase,
+        moonIllumination: bar.dataset.moonIllumination,
+        moonBoost: bar.dataset.moonBoost,
+        solunarLabel: bar.dataset.solunar,
         reasons: bar.dataset.reasons.split(" | ")
       };
 
@@ -504,6 +816,10 @@ function renderHourlyForecast(hourlyResults) {
       precipitation: bestBar.dataset.precip,
       pressureMsl: bestBar.dataset.pressure,
       pressureTrend3h: bestBar.dataset.pressureTrend,
+      moonPhase: bestBar.dataset.moonPhase,
+      moonIllumination: bestBar.dataset.moonIllumination,
+      moonBoost: bestBar.dataset.moonBoost,
+      solunarLabel: bestBar.dataset.solunar,
       reasons: bestBar.dataset.reasons.split(" | ")
     };
 
@@ -595,6 +911,26 @@ function renderSelectedHour(hour) {
         <div class="selected-hour-stat-label">Pressure Trend (3h)</div>
         <div class="selected-hour-stat-value">${hour.pressureTrend3h} hPa</div>
       </div>
+
+      <div class="selected-hour-stat">
+        <div class="selected-hour-stat-label">Moon Phase</div>
+        <div class="selected-hour-stat-value">${hour.moonPhase || "—"}</div>
+      </div>
+
+      <div class="selected-hour-stat">
+        <div class="selected-hour-stat-label">Moon Illumination</div>
+        <div class="selected-hour-stat-value">${hour.moonIllumination || "—"}%</div>
+      </div>
+
+      <div class="selected-hour-stat">
+        <div class="selected-hour-stat-label">Moon Boost</div>
+        <div class="selected-hour-stat-value">+${hour.moonBoost || "0"}</div>
+      </div>
+
+      <div class="selected-hour-stat">
+        <div class="selected-hour-stat-label">Solunar Window</div>
+        <div class="selected-hour-stat-value">${hour.solunarLabel || "None"}</div>
+      </div>
     </div>
 
     <ul class="selected-hour-reasons">
@@ -653,7 +989,7 @@ async function getForecast() {
     return;
   }
 
-  const url =
+  const weatherUrl =
     `https://api.open-meteo.com/v1/forecast` +
     `?latitude=${selectedSpot.lat}` +
     `&longitude=${selectedSpot.lon}` +
@@ -665,10 +1001,14 @@ async function getForecast() {
     `&timezone=auto`;
 
   try {
-    const response = await fetch(url);
-    const forecast = await response.json();
+    const [weatherResponse, moonData] = await Promise.all([
+      fetch(weatherUrl),
+      fetchMoonDataForToday(selectedSpot.lat, selectedSpot.lon)
+    ]);
 
-    if (!response.ok || forecast.error) {
+    const forecast = await weatherResponse.json();
+
+    if (!weatherResponse.ok || forecast.error) {
       throw new Error(forecast.reason || "Forecast request failed.");
     }
 
@@ -680,6 +1020,7 @@ async function getForecast() {
     const daily = forecast.daily;
     const sunrise = daily.sunrise[0];
     const sunset = daily.sunset[0];
+    const solunarData = buildSolunarDataForDate(getTodayDateString(), moonData);
 
     const hourIndex = getCurrentHourIndex(hourly.time);
 
@@ -701,13 +1042,15 @@ async function getForecast() {
       isDay: hourly.is_day[hourIndex],
       shortwaveRadiation: hourly.shortwave_radiation[hourIndex],
       minutesFromSunrise: getMinutesFromEvent(hourly.time[hourIndex], sunrise),
-      minutesToSunset: getMinutesFromEvent(sunset, hourly.time[hourIndex]),
+      minutesToSunset: getMinutesUntilEvent(sunset, hourly.time[hourIndex]),
       pressureTrend3h: getPressureTrend(hourly, hourIndex, 3),
-      precipLast6h: getRollingPrecipitation(hourly, hourIndex, 6)
+      precipLast6h: getRollingPrecipitation(hourly, hourIndex, 6),
+      moonData,
+      solunarData
     };
 
     const currentResult = calculateBiteScore(currentData, sunrise, sunset);
-    const hourlyResults = buildHourlyForecast(hourly, sunrise, sunset);
+    const hourlyResults = buildHourlyForecast(hourly, sunrise, sunset, moonData, solunarData);
 
     weatherOutput.innerHTML = `
       <p><strong>Spot:</strong> ${selectedSpot.name}</p>
@@ -722,6 +1065,11 @@ async function getForecast() {
       <p><strong>Pressure Trend (3h):</strong> ${roundValue(currentData.pressureTrend3h, 1)} hPa</p>
       <p><strong>Sunrise:</strong> ${new Date(sunrise).toLocaleTimeString()}</p>
       <p><strong>Sunset:</strong> ${new Date(sunset).toLocaleTimeString()}</p>
+      <p><strong>Moon Phase:</strong> ${escapeHtml(moonData.phaseName || "Unknown")}</p>
+      <p><strong>Moon Illumination:</strong> ${roundValue(moonData.illumination, 0)}%</p>
+      <p><strong>Moonrise:</strong> ${formatMaybeTime(moonData.moonrise)}</p>
+      <p><strong>Moonset:</strong> ${formatMaybeTime(moonData.moonset)}</p>
+      <p><strong>Moon Overhead:</strong> ${moonData.transit ? formatMaybeTime(moonData.transit) : "Not provided by API today"}</p>
     `;
 
     scoreOutput.textContent = currentResult.score;
@@ -745,7 +1093,7 @@ async function getForecast() {
     scoreHelp.textContent = "Could not load forecast data right now.";
     scoreHelp.classList.remove("good-state", "fair-state", "tough-state", "neutral-state");
     scoreHelp.classList.add("neutral-state");
-    reasonOutput.innerHTML = `<p>${error.message}</p>`;
+    reasonOutput.innerHTML = `<p>${escapeHtml(error.message)}</p>`;
     hourlyOutput.innerHTML = "<p>No hourly forecast available.</p>";
   }
 }
