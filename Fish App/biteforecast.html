@@ -4,6 +4,14 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Bluegill Bite Forecast</title>
+
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link
+    href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap"
+    rel="stylesheet"
+  />
+
   <link rel="stylesheet" href="styles.css" />
 </head>
 <body>
@@ -14,8 +22,19 @@
     </p>
 
     <section class="card controls-card">
-      <label for="spotSelect">Choose a fishing spot</label>
-      <select id="spotSelect"></select>
+      <div class="control-group">
+        <label for="spotSelect">Choose a fishing spot</label>
+        <select id="spotSelect"></select>
+      </div>
+
+      <div class="control-group">
+        <label for="forecastDate">Choose forecast date</label>
+        <input type="date" id="forecastDate" />
+        <p class="control-note">
+          Longer-range forecasts are useful, but less reliable farther out.
+        </p>
+      </div>
+
       <button id="forecastBtn">Get Forecast</button>
     </section>
 
@@ -33,7 +52,7 @@
       <p id="scoreHelp" class="scoreHelp">Pick a spot and load the forecast.</p>
     </section>
 
-        <section class="card">
+    <section class="card">
       <h2>Why this score?</h2>
       <div id="reasonOutput">
         <p>No explanation yet.</p>
@@ -48,12 +67,11 @@
     </section>
 
     <section class="card">
-  <h2>Selected hour</h2>
-  <div id="selectedHourDetails" class="selected-hour-card empty">
-    <p>Click any bar in the hourly chart to pin its details here.</p>
-  </div>
-</section>
-
+      <h2>Selected hour</h2>
+      <div id="selectedHourDetails" class="selected-hour-card empty">
+        <p>Click any bar in the hourly chart to pin its details here.</p>
+      </div>
+    </section>
   </main>
 
   <div id="chartTooltip" class="chart-tooltip hidden"></div>

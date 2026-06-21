@@ -1,4 +1,5 @@
 const spotSelect = document.getElementById("spotSelect");
+const forecastDate = document.getElementById("forecastDate");
 const forecastBtn = document.getElementById("forecastBtn");
 const weatherOutput = document.getElementById("weatherOutput");
 const scoreOutput = document.getElementById("scoreOutput");
@@ -8,6 +9,8 @@ const reasonOutput = document.getElementById("reasonOutput");
 const hourlyOutput = document.getElementById("hourlyOutput");
 const chartTooltip = document.getElementById("chartTooltip");
 const selectedHourDetails = document.getElementById("selectedHourDetails");
+
+const MAX_FORECAST_DAYS = 16;
 
 const MOON_SCORING = {
   fullNewBoost: 0.5,
@@ -31,23 +34,55 @@ function populateSpots() {
   });
 }
 
-function getCurrentHourIndex(hourlyTimes) {
-  const now = new Date();
-  const year = now.getFullYear();
-  const month = String(now.getMonth() + 1).padStart(2, "0");
-  const day = String(now.getDate()).padStart(2, "0");
-  const hour = String(now.getHours()).padStart(2, "0");
-  const currentHourString = `${year}-${month}-${day}T${hour}:00`;
-
-  return hourlyTimes.findIndex(time => time === currentHourString);
+function toIsoLocalDate(date = new Date()) {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
 }
 
 function getTodayDateString() {
+  return toIsoLocalDate(new Date());
+}
+
+function addDays(dateString, daysToAdd) {
+  const date = new Date(`${dateString}T00:00:00`);
+  date.setDate(date.getDate() + daysToAdd);
+  return toIsoLocalDate(date);
+}
+
+function getForecastDaysForSelectedDate(selectedDate) {
+  const today = getTodayDateString();
+  const todayDate = new Date(`${today}T00:00:00`);
+  const selected = new Date(`${selectedDate}T00:00:00`);
+  const diffMs = selected - todayDate;
+  const diffDays = Math.floor(diffMs / (1000 * 60 * 60 * 24));
+  return clamp(diffDays + 1, 1, MAX_FORECAST_DAYS);
+}
+
+function initializeDatePicker() {
+  if (!forecastDate) return;
+
+  const today = getTodayDateString();
+  const maxDate = addDays(today, MAX_FORECAST_DAYS - 1);
+
+  forecastDate.value = today;
+  forecastDate.min = today;
+  forecastDate.max = maxDate;
+}
+
+function isTodaySelected(selectedDate) {
+  return selectedDate === getTodayDateString();
+}
+
+function getCurrentHourIndexForDate(hourlyTimes, selectedDate) {
   const now = new Date();
-  const year = now.getFullYear();
-  const month = String(now.getMonth() + 1).padStart(2, "0");
-  const day = String(now.getDate()).padStart(2, "0");
-  return `${year}-${month}-${day}`;
+  const currentHour = `${selectedDate}T${String(now.getHours()).padStart(2, "0")}:00`;
+  return hourlyTimes.findIndex(time => time === currentHour);
+}
+
+function getDayIndex(dailyTimes, selectedDate) {
+  return dailyTimes.findIndex(date => date === selectedDate);
 }
 
 function formatHourLabel(timeString) {
@@ -117,16 +152,10 @@ function getRollingPrecipitation(hourly, index, lookbackHours = 6) {
   return total;
 }
 
-function toIsoLocalDate(date = new Date()) {
-  const year = date.getFullYear();
-  const month = String(date.getMonth() + 1).padStart(2, "0");
-  const day = String(date.getDate()).padStart(2, "0");
-  return `${year}-${month}-${day}`;
-}
-
 function normalizeUsnoTimeString(value) {
   if (!value || typeof value !== "string") return null;
   const cleaned = value.trim().toLowerCase();
+
   if (
     cleaned === "none" ||
     cleaned === "n/a" ||
@@ -155,6 +184,7 @@ function normalizeUsnoTimeString(value) {
 function buildLocalIsoFromDateAndUsnoTime(dateString, usnoTime) {
   const parsed = normalizeUsnoTimeString(usnoTime);
   if (!parsed) return null;
+
   const { hour, minute } = parsed;
   return `${dateString}T${String(hour).padStart(2, "0")}:${String(minute).padStart(2, "0")}`;
 }
@@ -186,35 +216,9 @@ function isWithinWindow(targetTime, centerTime, windowMinutes) {
 function buildSolunarDataForDate(dateString, moonData) {
   const moonrise = moonData.moonrise || null;
   const moonset = moonData.moonset || null;
-  const transit = moonData.transit || null;
-
-  const underfoot = transit
-    ? new Date(new Date(transit).getTime() + 12 * 60 * 60 * 1000)
-    : null;
-
-  const underfootIso = underfoot
-    ? `${underfoot.getFullYear()}-${String(underfoot.getMonth() + 1).padStart(2, "0")}-${String(underfoot.getDate()).padStart(2, "0")}T${String(underfoot.getHours()).padStart(2, "0")}:${String(underfoot.getMinutes()).padStart(2, "0")}`
-    : null;
 
   return {
-    majorPeriods: [
-      transit
-        ? {
-            type: "Moon overhead",
-            center: transit,
-            start: new Date(new Date(transit).getTime() - MOON_SCORING.majorWindowMinutes * 60000).toISOString(),
-            end: new Date(new Date(transit).getTime() + MOON_SCORING.majorWindowMinutes * 60000).toISOString()
-          }
-        : null,
-      underfootIso
-        ? {
-            type: "Moon underfoot",
-            center: underfootIso,
-            start: new Date(new Date(underfootIso).getTime() - MOON_SCORING.majorWindowMinutes * 60000).toISOString(),
-            end: new Date(new Date(underfootIso).getTime() + MOON_SCORING.majorWindowMinutes * 60000).toISOString()
-          }
-        : null
-    ].filter(Boolean),
+    majorPeriods: [],
     minorPeriods: [
       moonrise
         ? {
@@ -288,7 +292,7 @@ function getSolunarBoost(data) {
   };
 }
 
-function calculateBiteScore(data, sunrise, sunset) {
+function calculateBiteScore(data) {
   let score = 5;
   const reasons = [];
 
@@ -395,10 +399,7 @@ function calculateBiteScore(data, sunrise, sunset) {
     }
   }
 
-  const phaseResult = getPhaseBoost(
-    data.moonData?.phaseName,
-    data.moonData?.illumination
-  );
+  const phaseResult = getPhaseBoost(data.moonData?.phaseName, data.moonData?.illumination);
   score += phaseResult.boost;
   reasons.push(...phaseResult.reasons);
 
@@ -425,13 +426,12 @@ function calculateBiteScore(data, sunrise, sunset) {
   };
 }
 
-function buildHourlyForecast(hourly, sunrise, sunset, moonData, solunarData) {
-  const today = getTodayDateString();
+function buildHourlyForecast(hourly, sunrise, sunset, moonData, solunarData, selectedDate) {
   const hourlyResults = [];
 
   for (let i = 0; i < hourly.time.length; i++) {
     const timeString = hourly.time[i];
-    if (!timeString.startsWith(today)) continue;
+    if (!timeString.startsWith(selectedDate)) continue;
 
     const minutesFromSunrise = getMinutesFromEvent(timeString, sunrise);
     const minutesToSunset = getMinutesUntilEvent(sunset, timeString);
@@ -457,7 +457,7 @@ function buildHourlyForecast(hourly, sunrise, sunset, moonData, solunarData) {
       solunarData
     };
 
-    const result = calculateBiteScore(hourData, sunrise, sunset);
+    const result = calculateBiteScore(hourData);
 
     hourlyResults.push({
       time: timeString,
@@ -510,10 +510,9 @@ function formatMaybeTime(isoString) {
   });
 }
 
-async function fetchMoonDataForToday(lat, lon) {
-  const today = toIsoLocalDate(new Date());
+async function fetchMoonDataForDate(lat, lon, dateString) {
   const usnoUrl =
-    `https://aa.usno.navy.mil/api/rstt/oneday?date=${today}&coords=${lat},${lon}&tz=0&id=bluegill`;
+    `https://aa.usno.navy.mil/api/rstt/oneday?date=${dateString}&coords=${lat},${lon}&tz=0&id=bluegill`;
 
   const response = await fetch(usnoUrl);
   const moonJson = await response.json();
@@ -547,9 +546,9 @@ async function fetchMoonDataForToday(lat, lon) {
     if (!time) continue;
 
     if (phen === "rise") {
-      moonrise = buildLocalIsoFromDateAndUsnoTime(today, time);
+      moonrise = buildLocalIsoFromDateAndUsnoTime(dateString, time);
     } else if (phen === "set") {
-      moonset = buildLocalIsoFromDateAndUsnoTime(today, time);
+      moonset = buildLocalIsoFromDateAndUsnoTime(dateString, time);
     }
   }
 
@@ -602,10 +601,33 @@ function hideChartTooltip() {
   chartTooltip.classList.add("hidden");
 }
 
-function renderHourlyForecast(hourlyResults) {
+function createSelectedHourObjectFromBar(bar) {
+  return {
+    formattedTime: bar.dataset.time,
+    score: Number(bar.dataset.score),
+    label: bar.dataset.label,
+    temperature: bar.dataset.temp,
+    apparentTemperature: bar.dataset.apparentTemp,
+    cloudCover: bar.dataset.cloud,
+    windSpeed: bar.dataset.wind,
+    relativeHumidity: bar.dataset.humidity,
+    precipitation: bar.dataset.precip,
+    pressureMsl: bar.dataset.pressure,
+    pressureTrend3h: bar.dataset.pressureTrend,
+    moonPhase: bar.dataset.moonPhase,
+    moonIllumination: bar.dataset.moonIllumination,
+    moonBoost: bar.dataset.moonBoost,
+    solunarLabel: bar.dataset.solunar,
+    reasons: bar.dataset.reasons.split(" | ")
+  };
+}
+
+function renderHourlyForecast(hourlyResults, selectedDate) {
   if (!hourlyResults.length) {
-    hourlyOutput.innerHTML = "<p>No hourly forecast available for today.</p>";
+    hourlyOutput.innerHTML = `<p>No hourly forecast available for ${selectedDate}.</p>`;
     hideChartTooltip();
+    selectedHourDetails.classList.add("empty");
+    selectedHourDetails.innerHTML = "<p>No selected hour available.</p>";
     return;
   }
 
@@ -660,9 +682,11 @@ function renderHourlyForecast(hourlyResults) {
 
   const windowsToShow = groupedWindows.length ? groupedWindows.slice(0, 3) : fallbackWindows;
 
+  const dayHeading = isTodaySelected(selectedDate) ? "Best times to fish today" : `Best times to fish on ${selectedDate}`;
+
   const topHtml = `
     <div class="top-windows">
-      <h3>Best times to fish today</h3>
+      <h3>${dayHeading}</h3>
       <ul class="top-windows-list">
         ${windowsToShow.map(window => {
           const sameTime = window.start.formattedTime === window.end.formattedTime;
@@ -766,64 +790,24 @@ function renderHourlyForecast(hourlyResults) {
       });
 
       bar.classList.add("selected");
-
-      const selectedHour = {
-        formattedTime: bar.dataset.time,
-        score: Number(bar.dataset.score),
-        label: bar.dataset.label,
-        temperature: bar.dataset.temp,
-        apparentTemperature: bar.dataset.apparentTemp,
-        cloudCover: bar.dataset.cloud,
-        windSpeed: bar.dataset.wind,
-        relativeHumidity: bar.dataset.humidity,
-        precipitation: bar.dataset.precip,
-        pressureMsl: bar.dataset.pressure,
-        pressureTrend3h: bar.dataset.pressureTrend,
-        moonPhase: bar.dataset.moonPhase,
-        moonIllumination: bar.dataset.moonIllumination,
-        moonBoost: bar.dataset.moonBoost,
-        solunarLabel: bar.dataset.solunar,
-        reasons: bar.dataset.reasons.split(" | ")
-      };
-
-      renderSelectedHour(selectedHour);
+      renderSelectedHour(createSelectedHourObjectFromBar(bar));
     });
   });
 
   if (bars.length > 0) {
-    let bestBar = bars[0];
+    let defaultBar = bars[0];
 
     bars.forEach(bar => {
       const barScore = Number(bar.dataset.score);
-      const bestScore = Number(bestBar.dataset.score);
+      const bestScore = Number(defaultBar.dataset.score);
 
       if (barScore > bestScore) {
-        bestBar = bar;
+        defaultBar = bar;
       }
     });
 
-    bestBar.classList.add("selected");
-
-    const selectedHour = {
-      formattedTime: bestBar.dataset.time,
-      score: Number(bestBar.dataset.score),
-      label: bestBar.dataset.label,
-      temperature: bestBar.dataset.temp,
-      apparentTemperature: bestBar.dataset.apparentTemp,
-      cloudCover: bestBar.dataset.cloud,
-      windSpeed: bestBar.dataset.wind,
-      relativeHumidity: bestBar.dataset.humidity,
-      precipitation: bestBar.dataset.precip,
-      pressureMsl: bestBar.dataset.pressure,
-      pressureTrend3h: bestBar.dataset.pressureTrend,
-      moonPhase: bestBar.dataset.moonPhase,
-      moonIllumination: bestBar.dataset.moonIllumination,
-      moonBoost: bestBar.dataset.moonBoost,
-      solunarLabel: bestBar.dataset.solunar,
-      reasons: bestBar.dataset.reasons.split(" | ")
-    };
-
-    renderSelectedHour(selectedHour);
+    defaultBar.classList.add("selected");
+    renderSelectedHour(createSelectedHourObjectFromBar(defaultBar));
   }
 }
 
@@ -839,17 +823,19 @@ function updateScoreLabelStyle(label) {
   }
 }
 
-function updateScoreHelp(score, label) {
+function updateScoreHelp(score, label, selectedDate) {
   scoreHelp.classList.remove("good-state", "fair-state", "tough-state", "neutral-state");
 
+  const futureNote = isTodaySelected(selectedDate) ? "" : " Forecast confidence is lower farther out.";
+
   if (label === "Excellent" || label === "Good") {
-    scoreHelp.textContent = "Strong conditions — worth planning around this window.";
+    scoreHelp.textContent = `Strong conditions — worth planning around this window.${futureNote}`;
     scoreHelp.classList.add("good-state");
   } else if (label === "Fair") {
-    scoreHelp.textContent = "Decent conditions — fishable, but not peak activity.";
+    scoreHelp.textContent = `Decent conditions — fishable, but not peak activity.${futureNote}`;
     scoreHelp.classList.add("fair-state");
   } else if (label === "Tough" || label === "Poor") {
-    scoreHelp.textContent = "Slow conditions — you may need patience or a backup plan.";
+    scoreHelp.textContent = `Slow conditions — you may need patience or a backup plan.${futureNote}`;
     scoreHelp.classList.add("tough-state");
   } else {
     scoreHelp.textContent = "Pick a spot and load the forecast.";
@@ -859,6 +845,11 @@ function updateScoreHelp(score, label) {
 
 function renderSelectedHour(hour) {
   selectedHourDetails.classList.remove("empty");
+
+  const moonIlluminationText =
+    hour.moonIllumination === null || hour.moonIllumination === undefined || hour.moonIllumination === "—"
+      ? "—"
+      : `${hour.moonIllumination}%`;
 
   selectedHourDetails.innerHTML = `
     <div class="selected-hour-header">
@@ -919,7 +910,7 @@ function renderSelectedHour(hour) {
 
       <div class="selected-hour-stat">
         <div class="selected-hour-stat-label">Moon Illumination</div>
-        <div class="selected-hour-stat-value">${hour.moonIllumination || "—"}%</div>
+        <div class="selected-hour-stat-value">${moonIlluminationText}</div>
       </div>
 
       <div class="selected-hour-stat">
@@ -941,17 +932,20 @@ function renderSelectedHour(hour) {
 
 async function getForecast() {
   const selectedSpot = spots[Number(spotSelect.value)];
+  const selectedDate = forecastDate?.value || getTodayDateString();
 
   hideChartTooltip();
   weatherOutput.innerHTML = "<p>Loading forecast...</p>";
   scoreOutput.textContent = "--";
   scoreLabel.textContent = "Calculating...";
   scoreLabel.classList.remove("good", "fair", "tough");
-  scoreHelp.textContent = "Checking current conditions...";
+  scoreHelp.textContent = "Checking forecast conditions...";
   scoreHelp.classList.remove("good-state", "fair-state", "tough-state", "neutral-state");
   scoreHelp.classList.add("neutral-state");
   reasonOutput.innerHTML = "<p>Checking conditions...</p>";
   hourlyOutput.innerHTML = "<p>Building hourly forecast...</p>";
+  selectedHourDetails.classList.add("empty");
+  selectedHourDetails.innerHTML = "<p>Loading selected hour...</p>";
 
   if (!selectedSpot) {
     weatherOutput.innerHTML = "<p>No spot was selected.</p>";
@@ -963,6 +957,7 @@ async function getForecast() {
     scoreHelp.classList.add("neutral-state");
     reasonOutput.innerHTML = "<p>Please choose a valid spot.</p>";
     hourlyOutput.innerHTML = "<p>No hourly forecast available.</p>";
+    selectedHourDetails.innerHTML = "<p>No selected hour available.</p>";
     return;
   }
 
@@ -974,9 +969,9 @@ async function getForecast() {
   ) {
     weatherOutput.innerHTML = `
       <p>Spot data is missing valid coordinates.</p>
-      <p><strong>Spot:</strong> ${selectedSpot.name ?? "Unknown"}</p>
-      <p><strong>lat:</strong> ${selectedSpot.lat}</p>
-      <p><strong>lon:</strong> ${selectedSpot.lon}</p>
+      <p><strong>Spot:</strong> ${escapeHtml(selectedSpot.name ?? "Unknown")}</p>
+      <p><strong>lat:</strong> ${escapeHtml(selectedSpot.lat)}</p>
+      <p><strong>lon:</strong> ${escapeHtml(selectedSpot.lon)}</p>
     `;
     scoreOutput.textContent = "--";
     scoreLabel.textContent = "Error";
@@ -986,8 +981,11 @@ async function getForecast() {
     scoreHelp.classList.add("neutral-state");
     reasonOutput.innerHTML = "<p>Check your spots.js file.</p>";
     hourlyOutput.innerHTML = "<p>No hourly forecast available.</p>";
+    selectedHourDetails.innerHTML = "<p>No selected hour available.</p>";
     return;
   }
+
+  const forecastDays = getForecastDaysForSelectedDate(selectedDate);
 
   const weatherUrl =
     `https://api.open-meteo.com/v1/forecast` +
@@ -995,6 +993,7 @@ async function getForecast() {
     `&longitude=${selectedSpot.lon}` +
     `&hourly=temperature_2m,apparent_temperature,relative_humidity_2m,precipitation,precipitation_probability,cloud_cover,pressure_msl,surface_pressure,wind_speed_10m,is_day,shortwave_radiation` +
     `&daily=sunrise,sunset` +
+    `&forecast_days=${forecastDays}` +
     `&temperature_unit=fahrenheit` +
     `&wind_speed_unit=mph` +
     `&precipitation_unit=inch` +
@@ -1003,7 +1002,7 @@ async function getForecast() {
   try {
     const [weatherResponse, moonData] = await Promise.all([
       fetch(weatherUrl),
-      fetchMoonDataForToday(selectedSpot.lat, selectedSpot.lon)
+      fetchMoonDataForDate(selectedSpot.lat, selectedSpot.lon, selectedDate)
     ]);
 
     const forecast = await weatherResponse.json();
@@ -1018,53 +1017,56 @@ async function getForecast() {
 
     const hourly = forecast.hourly;
     const daily = forecast.daily;
-    const sunrise = daily.sunrise[0];
-    const sunset = daily.sunset[0];
-    const solunarData = buildSolunarDataForDate(getTodayDateString(), moonData);
+    const dayIndex = getDayIndex(daily.time, selectedDate);
 
-    const hourIndex = getCurrentHourIndex(hourly.time);
-
-    if (hourIndex === -1) {
-      throw new Error("Could not match the current hour to the forecast.");
+    if (dayIndex === -1) {
+      throw new Error("Selected date is outside the available forecast range.");
     }
 
-    const currentData = {
-      time: hourly.time[hourIndex],
-      temperature: hourly.temperature_2m[hourIndex],
-      apparentTemperature: hourly.apparent_temperature[hourIndex],
-      relativeHumidity: hourly.relative_humidity_2m[hourIndex],
-      precipitation: hourly.precipitation[hourIndex],
-      precipitationProbability: hourly.precipitation_probability[hourIndex],
-      cloudCover: hourly.cloud_cover[hourIndex],
-      pressureMsl: hourly.pressure_msl[hourIndex],
-      surfacePressure: hourly.surface_pressure[hourIndex],
-      windSpeed: hourly.wind_speed_10m[hourIndex],
-      isDay: hourly.is_day[hourIndex],
-      shortwaveRadiation: hourly.shortwave_radiation[hourIndex],
-      minutesFromSunrise: getMinutesFromEvent(hourly.time[hourIndex], sunrise),
-      minutesToSunset: getMinutesUntilEvent(sunset, hourly.time[hourIndex]),
-      pressureTrend3h: getPressureTrend(hourly, hourIndex, 3),
-      precipLast6h: getRollingPrecipitation(hourly, hourIndex, 6),
-      moonData,
-      solunarData
+    const sunrise = daily.sunrise[dayIndex];
+    const sunset = daily.sunset[dayIndex];
+    const solunarData = buildSolunarDataForDate(selectedDate, moonData);
+    const hourlyResults = buildHourlyForecast(hourly, sunrise, sunset, moonData, solunarData, selectedDate);
+
+    if (!hourlyResults.length) {
+      throw new Error(`No hourly forecast available for ${selectedDate}.`);
+    }
+
+    let summaryHour = hourlyResults[0];
+
+    if (isTodaySelected(selectedDate)) {
+      const currentHourIndex = getCurrentHourIndexForDate(hourly.time, selectedDate);
+      if (currentHourIndex !== -1) {
+        const currentHourTime = hourly.time[currentHourIndex];
+        const matchingHour = hourlyResults.find(hour => hour.time === currentHourTime);
+        if (matchingHour) {
+          summaryHour = matchingHour;
+        }
+      }
+    } else {
+      summaryHour = [...hourlyResults].sort((a, b) => b.score - a.score || a.time.localeCompare(b.time))[0];
+    }
+
+    const summaryResult = {
+      score: summaryHour.score,
+      label: summaryHour.label,
+      reasons: summaryHour.reasons
     };
 
-    const currentResult = calculateBiteScore(currentData, sunrise, sunset);
-    const hourlyResults = buildHourlyForecast(hourly, sunrise, sunset, moonData, solunarData);
-
     weatherOutput.innerHTML = `
-      <p><strong>Spot:</strong> ${selectedSpot.name}</p>
-      <p><strong>Forecast Time:</strong> ${new Date(currentData.time).toLocaleString()}</p>
-      <p><strong>Temperature:</strong> ${roundValue(currentData.temperature, 0)}°F</p>
-      <p><strong>Feels Like:</strong> ${roundValue(currentData.apparentTemperature, 0)}°F</p>
-      <p><strong>Cloud Cover:</strong> ${roundValue(currentData.cloudCover, 0)}%</p>
-      <p><strong>Wind Speed:</strong> ${roundValue(currentData.windSpeed, 0)} mph</p>
-      <p><strong>Humidity:</strong> ${roundValue(currentData.relativeHumidity, 0)}%</p>
-      <p><strong>Rain:</strong> ${roundValue(currentData.precipitation, 2)} in</p>
-      <p><strong>Pressure:</strong> ${roundValue(currentData.pressureMsl, 1)} hPa</p>
-      <p><strong>Pressure Trend (3h):</strong> ${roundValue(currentData.pressureTrend3h, 1)} hPa</p>
-      <p><strong>Sunrise:</strong> ${new Date(sunrise).toLocaleTimeString()}</p>
-      <p><strong>Sunset:</strong> ${new Date(sunset).toLocaleTimeString()}</p>
+      <p><strong>Spot:</strong> ${escapeHtml(selectedSpot.name)}</p>
+      <p><strong>Forecast Date:</strong> ${new Date(`${selectedDate}T00:00:00`).toLocaleDateString()}</p>
+      <p><strong>Summary Hour:</strong> ${escapeHtml(summaryHour.formattedTime)}${isTodaySelected(selectedDate) ? " (current hour if available)" : " (best hour for selected date)"}</p>
+      <p><strong>Temperature:</strong> ${roundValue(summaryHour.temperature, 0)}°F</p>
+      <p><strong>Feels Like:</strong> ${roundValue(summaryHour.apparentTemperature, 0)}°F</p>
+      <p><strong>Cloud Cover:</strong> ${roundValue(summaryHour.cloudCover, 0)}%</p>
+      <p><strong>Wind Speed:</strong> ${roundValue(summaryHour.windSpeed, 0)} mph</p>
+      <p><strong>Humidity:</strong> ${roundValue(summaryHour.relativeHumidity, 0)}%</p>
+      <p><strong>Rain:</strong> ${roundValue(summaryHour.precipitation, 2)} in</p>
+      <p><strong>Pressure:</strong> ${roundValue(summaryHour.pressureMsl, 1)} hPa</p>
+      <p><strong>Pressure Trend (3h):</strong> ${roundValue(summaryHour.pressureTrend3h, 1)} hPa</p>
+      <p><strong>Sunrise:</strong> ${new Date(sunrise).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}</p>
+      <p><strong>Sunset:</strong> ${new Date(sunset).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}</p>
       <p><strong>Moon Phase:</strong> ${escapeHtml(moonData.phaseName || "Unknown")}</p>
       <p><strong>Moon Illumination:</strong> ${roundValue(moonData.illumination, 0)}%</p>
       <p><strong>Moonrise:</strong> ${formatMaybeTime(moonData.moonrise)}</p>
@@ -1072,18 +1074,18 @@ async function getForecast() {
       <p><strong>Moon Overhead:</strong> ${moonData.transit ? formatMaybeTime(moonData.transit) : "Not provided by API today"}</p>
     `;
 
-    scoreOutput.textContent = currentResult.score;
-    scoreLabel.textContent = currentResult.label;
-    updateScoreLabelStyle(currentResult.label);
-    updateScoreHelp(currentResult.score, currentResult.label);
+    scoreOutput.textContent = summaryResult.score;
+    scoreLabel.textContent = summaryResult.label;
+    updateScoreLabelStyle(summaryResult.label);
+    updateScoreHelp(summaryResult.score, summaryResult.label, selectedDate);
 
     reasonOutput.innerHTML = `
       <ul>
-        ${currentResult.reasons.map(reason => `<li>${reason}</li>`).join("")}
+        ${summaryResult.reasons.map(reason => `<li>${escapeHtml(reason)}</li>`).join("")}
       </ul>
     `;
 
-    renderHourlyForecast(hourlyResults);
+    renderHourlyForecast(hourlyResults, selectedDate);
   } catch (error) {
     hideChartTooltip();
     weatherOutput.innerHTML = `<p>Error loading forecast.</p>`;
@@ -1095,9 +1097,12 @@ async function getForecast() {
     scoreHelp.classList.add("neutral-state");
     reasonOutput.innerHTML = `<p>${escapeHtml(error.message)}</p>`;
     hourlyOutput.innerHTML = "<p>No hourly forecast available.</p>";
+    selectedHourDetails.classList.add("empty");
+    selectedHourDetails.innerHTML = "<p>No selected hour available.</p>";
   }
 }
 
 scoreHelp.classList.add("neutral-state");
 populateSpots();
+initializeDatePicker();
 forecastBtn.addEventListener("click", getForecast);
