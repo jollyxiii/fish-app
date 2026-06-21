@@ -334,18 +334,27 @@ function renderHourlyForecast(hourlyResults) {
 });
 
 if (bars.length > 0) {
-  const firstBar = bars[0];
+  let bestBar = bars[0];
 
-  firstBar.classList.add("selected");
+  bars.forEach(bar => {
+    const barScore = Number(bar.dataset.score);
+    const bestScore = Number(bestBar.dataset.score);
+
+    if (barScore > bestScore) {
+      bestBar = bar;
+    }
+  });
+
+  bestBar.classList.add("selected");
 
   const selectedHour = {
-    formattedTime: firstBar.dataset.time,
-    score: Number(firstBar.dataset.score),
-    label: firstBar.dataset.label,
-    temperature: firstBar.dataset.temp,
-    cloudCover: firstBar.dataset.cloud,
-    windSpeed: firstBar.dataset.wind,
-    reasons: firstBar.dataset.reasons.split(" | ")
+    formattedTime: bestBar.dataset.time,
+    score: Number(bestBar.dataset.score),
+    label: bestBar.dataset.label,
+    temperature: bestBar.dataset.temp,
+    cloudCover: bestBar.dataset.cloud,
+    windSpeed: bestBar.dataset.wind,
+    reasons: bestBar.dataset.reasons.split(" | ")
   };
 
   renderSelectedHour(selectedHour);
