@@ -267,16 +267,44 @@ li {
 }
 
 .hourly-chart {
+  position: relative;
   display: flex;
   flex-wrap: nowrap;
   align-items: flex-end;
   gap: 10px;
-  min-height: 260px;
-  padding: 20px 12px 12px;
+  min-height: 350px;
+  padding: 20px 12px 88px;
   overflow-x: auto;
   overflow-y: hidden;
   border-radius: 12px;
   background: linear-gradient(to top, #eef4f2 0%, #f8fbfa 100%);
+}
+
+.chart-legend {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 8px;
+  color: var(--muted);
+  font-size: 0.75rem;
+}
+
+.chart-legend-line {
+  display: inline-block;
+  width: 18px;
+  height: 2px;
+  background: #e06040;
+  border-radius: 2px;
+  opacity: 0.8;
+}
+
+.chart-legend-swatch--precip {
+  display: inline-block;
+  width: 14px;
+  height: 10px;
+  background: #5b8fc9;
+  border-radius: 3px;
+  opacity: 0.45;
 }
 
 .hour-bar-wrap {

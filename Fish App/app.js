@@ -622,6 +622,175 @@ function createSelectedHourObjectFromBar(bar) {
   };
 }
 
+function renderTempLine(hourlyResults) {
+  const chart = document.getElementById("hourlyChart");
+  if (!chart || !hourlyResults.length) return;
+
+  const existing = chart.querySelector(".temp-line-svg");
+  if (existing) existing.remove();
+
+  const temps = hourlyResults.map(h => h.temperature);
+  const minTemp = Math.min(...temps);
+  const maxTemp = Math.max(...temps);
+  const tempRange = maxTemp - minTemp || 1;
+
+  const precips = hourlyResults.map(h => h.precipitation ?? 0);
+  const maxPrecip = Math.max(...precips);
+  const precipRange = maxPrecip || 1;
+  const hasPrecip = maxPrecip > 0;
+
+  const chartRect = chart.getBoundingClientRect();
+  const chartHeight = chartRect.height;
+  const chartWidth = chart.scrollWidth;
+
+  // The bottom 88px of padding is reserved for the precipitation band.
+  // Bars (align-items: flex-end) grow upward from the content area floor,
+  // which sits 88px above the element's visual bottom — so bars never enter this band.
+  const PRECIP_BAND = 80;
+  const precipFloor = chartHeight - 6;       // near bottom of SVG
+  const precipCeiling = precipFloor - PRECIP_BAND;  // top of precip zone
+
+  // Temperature line spans the bar region only (above the precip band)
+  const yTop = chartHeight * 0.08;
+  const yBottom = precipCeiling - 10;
+
+  const svgNS = "http://www.w3.org/2000/svg";
+  const svg = document.createElementNS(svgNS, "svg");
+  svg.setAttribute("class", "temp-line-svg");
+  svg.setAttribute("width", chartWidth);
+  svg.setAttribute("height", chartHeight);
+  svg.style.cssText = "position:absolute;top:0;left:0;pointer-events:none;overflow:visible;";
+
+  function makeGuideLine(y, color) {
+    const line = document.createElementNS(svgNS, "line");
+    line.setAttribute("x1", 0);
+    line.setAttribute("y1", y.toFixed(1));
+    line.setAttribute("x2", chartWidth);
+    line.setAttribute("y2", y.toFixed(1));
+    line.setAttribute("stroke", color);
+    line.setAttribute("stroke-width", "1");
+    line.setAttribute("stroke-dasharray", "3 5");
+    line.setAttribute("opacity", "0.28");
+    return line;
+  }
+
+  function makeTempLabel(text, y, isHigh) {
+    const g = document.createElementNS(svgNS, "g");
+
+    const pill = document.createElementNS(svgNS, "rect");
+    const pillX = 4;
+    const pillW = 32;
+    const pillH = 16;
+    const pillY = isHigh ? y - pillH - 3 : y + 3;
+    pill.setAttribute("x", pillX);
+    pill.setAttribute("y", pillY.toFixed(1));
+    pill.setAttribute("width", pillW);
+    pill.setAttribute("height", pillH);
+    pill.setAttribute("rx", 4);
+    pill.setAttribute("fill", "#e06040");
+    pill.setAttribute("opacity", "0.15");
+
+    const label = document.createElementNS(svgNS, "text");
+    label.setAttribute("x", pillX + pillW / 2);
+    label.setAttribute("y", (pillY + pillH * 0.72).toFixed(1));
+    label.setAttribute("text-anchor", "middle");
+    label.setAttribute("fill", "#c04828");
+    label.setAttribute("font-size", "11");
+    label.setAttribute("font-family", "-apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif");
+    label.setAttribute("font-weight", "700");
+    label.setAttribute("opacity", "0.9");
+    label.textContent = text;
+
+    g.appendChild(pill);
+    g.appendChild(label);
+    return g;
+  }
+
+  const barWraps = chart.querySelectorAll(".hour-bar-wrap");
+  const tempPoints = [];
+  const precipTopPoints = [];
+
+  barWraps.forEach((wrap, i) => {
+    const wrapRect = wrap.getBoundingClientRect();
+    const x = wrapRect.left - chartRect.left + chart.scrollLeft + wrapRect.width / 2;
+
+    const normalizedTemp = (temps[i] - minTemp) / tempRange;
+    const ty = yBottom - normalizedTemp * (yBottom - yTop);
+    tempPoints.push(`${x.toFixed(1)},${ty.toFixed(1)}`);
+
+    if (hasPrecip) {
+      const normalizedPrecip = (precips[i] ?? 0) / precipRange;
+      // Scale within the dedicated precip band only
+      const py = precipFloor - normalizedPrecip * PRECIP_BAND;
+      precipTopPoints.push([x, py]);
+    }
+  });
+
+  // Faint divider line between bar zone and precip band
+  const divider = document.createElementNS(svgNS, "line");
+  divider.setAttribute("x1", 0);
+  divider.setAttribute("y1", precipCeiling.toFixed(1));
+  divider.setAttribute("x2", chartWidth);
+  divider.setAttribute("y2", precipCeiling.toFixed(1));
+  divider.setAttribute("stroke", "#a8c4e0");
+  divider.setAttribute("stroke-width", "1");
+  divider.setAttribute("opacity", "0.35");
+  svg.appendChild(divider);
+
+  // Temperature guide lines and labels
+  svg.appendChild(makeGuideLine(yTop, "#e06040"));
+  svg.appendChild(makeGuideLine(yBottom, "#e06040"));
+  svg.appendChild(makeTempLabel(`${Math.round(maxTemp)}°`, yTop, true));
+  svg.appendChild(makeTempLabel(`${Math.round(minTemp)}°`, yBottom, false));
+
+  // Precipitation area: filled polygon inside the dedicated lower band
+  if (hasPrecip) {
+    const firstX = precipTopPoints[0][0];
+    const lastX = precipTopPoints[precipTopPoints.length - 1][0];
+
+    const polygonPoints = [
+      `${firstX.toFixed(1)},${precipFloor.toFixed(1)}`,
+      ...precipTopPoints.map(([x, y]) => `${x.toFixed(1)},${y.toFixed(1)}`),
+      `${lastX.toFixed(1)},${precipFloor.toFixed(1)}`
+    ].join(" ");
+
+    const precipArea = document.createElementNS(svgNS, "polygon");
+    precipArea.setAttribute("points", polygonPoints);
+    precipArea.setAttribute("fill", "#5b8fc9");
+    precipArea.setAttribute("opacity", "0.22");
+    svg.appendChild(precipArea);
+
+    // Peak label just above the highest point in the band
+    const maxPrecipIndex = precips.indexOf(maxPrecip);
+    if (maxPrecipIndex !== -1 && precipTopPoints[maxPrecipIndex]) {
+      const [peakX, peakY] = precipTopPoints[maxPrecipIndex];
+      const peakLabel = document.createElementNS(svgNS, "text");
+      peakLabel.setAttribute("x", (peakX + 5).toFixed(1));
+      peakLabel.setAttribute("y", (peakY - 4).toFixed(1));
+      peakLabel.setAttribute("fill", "#3a6fa8");
+      peakLabel.setAttribute("font-size", "9.5");
+      peakLabel.setAttribute("font-family", "-apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif");
+      peakLabel.setAttribute("font-weight", "600");
+      peakLabel.setAttribute("opacity", "0.65");
+      peakLabel.textContent = `${maxPrecip.toFixed(2)}"`;
+      svg.appendChild(peakLabel);
+    }
+  }
+
+  // Temperature line (drawn on top)
+  const tempPolyline = document.createElementNS(svgNS, "polyline");
+  tempPolyline.setAttribute("points", tempPoints.join(" "));
+  tempPolyline.setAttribute("fill", "none");
+  tempPolyline.setAttribute("stroke", "#e06040");
+  tempPolyline.setAttribute("stroke-width", "2");
+  tempPolyline.setAttribute("stroke-linecap", "round");
+  tempPolyline.setAttribute("stroke-linejoin", "round");
+  tempPolyline.setAttribute("opacity", "0.72");
+
+  svg.appendChild(tempPolyline);
+  chart.appendChild(svg);
+}
+
 function renderHourlyForecast(hourlyResults, selectedDate) {
   if (!hourlyResults.length) {
     hourlyOutput.innerHTML = `<p>No hourly forecast available for ${selectedDate}.</p>`;
@@ -724,6 +893,12 @@ function renderHourlyForecast(hourlyResults, selectedDate) {
   const chartHtml = `
     <div class="hourly-chart-card">
       <h3>Hourly bite chart</h3>
+      <div class="chart-legend">
+        <span class="chart-legend-line"></span>
+        <span>Temp</span>
+        <span class="chart-legend-swatch--precip"></span>
+        <span>Rain</span>
+      </div>
       <div class="hourly-chart" id="hourlyChart">
         ${hourlyResults.map(hour => {
           const solunarLabel = hour.isMajorSolunar
@@ -809,6 +984,8 @@ function renderHourlyForecast(hourlyResults, selectedDate) {
     defaultBar.classList.add("selected");
     renderSelectedHour(createSelectedHourObjectFromBar(defaultBar));
   }
+
+  renderTempLine(hourlyResults);
 }
 
 function updateScoreLabelStyle(label) {
