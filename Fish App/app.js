@@ -914,6 +914,7 @@ function renderHourlyForecast(hourlyResults, selectedDate) {
                 class="hour-bar ${getBarClass(hour.label)} ${hour.isMajorSolunar ? "solunar-major" : ""} ${hour.isMinorSolunar ? "solunar-minor" : ""}"
                 style="height: ${Math.max(hour.score * 18, 18)}px"
                 data-time="${hour.formattedTime}"
+                data-hour="${new Date(hour.time).getHours()}"
                 data-score="${hour.score}"
                 data-label="${hour.label}"
                 data-temp="${hour.temperature}"
@@ -970,16 +971,21 @@ function renderHourlyForecast(hourlyResults, selectedDate) {
   });
 
   if (bars.length > 0) {
-    let defaultBar = bars[0];
+    const currentHour = new Date().getHours();
+    const barsArray = Array.from(bars);
 
-    bars.forEach(bar => {
-      const barScore = Number(bar.dataset.score);
-      const bestScore = Number(defaultBar.dataset.score);
+    // Try to find the bar matching the current local hour
+    let defaultBar = barsArray.find(bar => Number(bar.dataset.hour) === currentHour);
 
-      if (barScore > bestScore) {
-        defaultBar = bar;
-      }
-    });
+    // Fall back to the nearest upcoming hour
+    if (!defaultBar) {
+      defaultBar = barsArray.find(bar => Number(bar.dataset.hour) > currentHour);
+    }
+
+    // Last resort: use the first bar
+    if (!defaultBar) {
+      defaultBar = barsArray[0];
+    }
 
     defaultBar.classList.add("selected");
     renderSelectedHour(createSelectedHourObjectFromBar(defaultBar));
