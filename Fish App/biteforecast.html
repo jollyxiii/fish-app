@@ -41,18 +41,15 @@
       <div id="spotMap"></div>
     </section>
 
-    <section class="card">
-      <h2>Forecast Summary</h2>
-      <div id="weatherOutput">
-        <p>No forecast loaded yet.</p>
+    <section class="card forecast-card">
+      <div class="forecast-score-band">
+        <div id="scoreOutput" class="score">--</div>
+        <div id="scoreLabel" class="score-label">--</div>
+        <p id="scoreHelp" class="score-help neutral-state">Pick a spot and load the forecast.</p>
       </div>
-    </section>
-
-    <section class="card score-card">
-      <h2>BiteScore</h2>
-      <div id="scoreOutput" class="score">--</div>
-      <div id="scoreLabel" class="score-label">--</div>
-      <p id="scoreHelp" class="scoreHelp">Pick a spot and load the forecast.</p>
+      <div id="weatherOutput" class="forecast-details">
+        <p class="forecast-empty-state">No forecast loaded yet.</p>
+      </div>
     </section>
 
     <section class="card">

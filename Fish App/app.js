@@ -1237,24 +1237,50 @@ async function getForecast() {
     };
 
     weatherOutput.innerHTML = `
-      <p><strong>Spot:</strong> ${escapeHtml(selectedSpot.name)}</p>
-      <p><strong>Forecast Date:</strong> ${new Date(`${selectedDate}T00:00:00`).toLocaleDateString()}</p>
-      <p><strong>Summary Hour:</strong> ${escapeHtml(summaryHour.formattedTime)}${isTodaySelected(selectedDate) ? " (current hour if available)" : " (best hour for selected date)"}</p>
-      <p><strong>Temperature:</strong> ${roundValue(summaryHour.temperature, 0)}°F</p>
-      <p><strong>Feels Like:</strong> ${roundValue(summaryHour.apparentTemperature, 0)}°F</p>
-      <p><strong>Cloud Cover:</strong> ${roundValue(summaryHour.cloudCover, 0)}%</p>
-      <p><strong>Wind Speed:</strong> ${roundValue(summaryHour.windSpeed, 0)} mph</p>
-      <p><strong>Humidity:</strong> ${roundValue(summaryHour.relativeHumidity, 0)}%</p>
-      <p><strong>Rain:</strong> ${roundValue(summaryHour.precipitation, 2)} in</p>
-      <p><strong>Pressure:</strong> ${roundValue(summaryHour.pressureMsl, 1)} hPa</p>
-      <p><strong>Pressure Trend (3h):</strong> ${roundValue(summaryHour.pressureTrend3h, 1)} hPa</p>
-      <p><strong>Sunrise:</strong> ${new Date(sunrise).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}</p>
-      <p><strong>Sunset:</strong> ${new Date(sunset).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}</p>
-      <p><strong>Moon Phase:</strong> ${escapeHtml(moonData.phaseName || "Unknown")}</p>
-      <p><strong>Moon Illumination:</strong> ${roundValue(moonData.illumination, 0)}%</p>
-      <p><strong>Moonrise:</strong> ${formatMaybeTime(moonData.moonrise)}</p>
-      <p><strong>Moonset:</strong> ${formatMaybeTime(moonData.moonset)}</p>
-      <p><strong>Moon Overhead:</strong> ${moonData.transit ? formatMaybeTime(moonData.transit) : "Not provided by API today"}</p>
+      <div class="forecast-meta-row">
+        <div class="forecast-meta-item">
+          <span class="forecast-meta-label">Spot</span>
+          <span class="forecast-meta-value">${escapeHtml(selectedSpot.name)}</span>
+        </div>
+        <div class="forecast-meta-item">
+          <span class="forecast-meta-label">Date</span>
+          <span class="forecast-meta-value">${new Date(`${selectedDate}T00:00:00`).toLocaleDateString()}</span>
+        </div>
+        <div class="forecast-meta-item">
+          <span class="forecast-meta-label">Summary hour</span>
+          <span class="forecast-meta-value">${escapeHtml(summaryHour.formattedTime)} ${isTodaySelected(selectedDate) ? "(current)" : "(best)"}</span>
+        </div>
+      </div>
+      <div class="forecast-groups">
+        <div class="forecast-col">
+          <div class="forecast-group">
+            <div class="forecast-group-title">Weather</div>
+            <div class="forecast-row"><span class="forecast-label">Temperature</span><span class="forecast-value">${roundValue(summaryHour.temperature, 0)}°F</span></div>
+            <div class="forecast-row"><span class="forecast-label">Feels like</span><span class="forecast-value">${roundValue(summaryHour.apparentTemperature, 0)}°F</span></div>
+            <div class="forecast-row"><span class="forecast-label">Cloud cover</span><span class="forecast-value">${roundValue(summaryHour.cloudCover, 0)}%</span></div>
+            <div class="forecast-row"><span class="forecast-label">Rain</span><span class="forecast-value">${roundValue(summaryHour.precipitation, 2)} in</span></div>
+            <div class="forecast-row"><span class="forecast-label">Humidity</span><span class="forecast-value">${roundValue(summaryHour.relativeHumidity, 0)}%</span></div>
+            <div class="forecast-row"><span class="forecast-label">Wind</span><span class="forecast-value">${roundValue(summaryHour.windSpeed, 0)} mph</span></div>
+          </div>
+          <div class="forecast-group">
+            <div class="forecast-group-title">Pressure</div>
+            <div class="forecast-row"><span class="forecast-label">Pressure</span><span class="forecast-value">${roundValue(summaryHour.pressureMsl, 1)} hPa</span></div>
+            <div class="forecast-row"><span class="forecast-label">Trend (3h)</span><span class="forecast-value">${roundValue(summaryHour.pressureTrend3h, 1)} hPa</span></div>
+          </div>
+        </div>
+        <div class="forecast-col">
+          <div class="forecast-group">
+            <div class="forecast-group-title">Sun &amp; Moon</div>
+            <div class="forecast-row"><span class="forecast-label">Sunrise</span><span class="forecast-value">${new Date(sunrise).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}</span></div>
+            <div class="forecast-row"><span class="forecast-label">Sunset</span><span class="forecast-value">${new Date(sunset).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}</span></div>
+            <div class="forecast-row"><span class="forecast-label">Moon phase</span><span class="forecast-value">${escapeHtml(moonData.phaseName || "Unknown")}</span></div>
+            <div class="forecast-row"><span class="forecast-label">Illumination</span><span class="forecast-value">${roundValue(moonData.illumination, 0)}%</span></div>
+            <div class="forecast-row"><span class="forecast-label">Moonrise</span><span class="forecast-value">${formatMaybeTime(moonData.moonrise)}</span></div>
+            <div class="forecast-row"><span class="forecast-label">Moonset</span><span class="forecast-value">${formatMaybeTime(moonData.moonset)}</span></div>
+            <div class="forecast-row"><span class="forecast-label">Moon overhead</span><span class="forecast-value">${moonData.transit ? formatMaybeTime(moonData.transit) : "—"}</span></div>
+          </div>
+        </div>
+      </div>
     `;
 
     scoreOutput.textContent = summaryResult.score;
