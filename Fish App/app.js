@@ -1285,7 +1285,292 @@ async function getForecast() {
   }
 }
 
+let spotMap = null;
+let spotMarker = null;
+
+function initSpotMap() {
+  if (typeof L === "undefined") {
+    throw new Error("Leaflet did not load.");
+  }
+
+  const first = spots[Number(spotSelect.value)];
+  if (!first || typeof first.lat !== "number" || typeof first.lon !== "number") return;
+
+  spotMap = L.map("spotMap", {
+    scrollWheelZoom: false,
+    zoomControl: true
+  }).setView([first.lat, first.lon], 15);
+
+  L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
+    attribution: '© <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>',
+    maxZoom: 19
+  }).addTo(spotMap);
+
+  spotMarker = L.marker([first.lat, first.lon]).addTo(spotMap);
+  setSpotMapLabel(first);
+
+  // Forces Leaflet to recalculate tile layout in case the container
+  // size wasn't fully settled when the map was first created.
+  spotMap.invalidateSize();
+}
+
+function setSpotMapLabel(spot) {
+  const label = document.getElementById("spotMapLabel");
+  if (label) label.textContent = `${spot.name} · ${spot.type}`;
+}
+
+function updateSpotMap() {
+  const spot = spots[Number(spotSelect.value)];
+  if (!spot || typeof spot.lat !== "number" || typeof spot.lon !== "number") return;
+  if (!spotMap || !spotMarker) return;
+  const latlng = [spot.lat, spot.lon];
+  spotMarker.setLatLng(latlng);
+  spotMap.setView(latlng, 15);
+  setSpotMapLabel(spot);
+}
+
+// --- Custom spots (localStorage) ---
+
+const customSpots = [];
+
+function loadCustomSpots() {
+  try {
+    const saved = localStorage.getItem("bluegill_customSpots");
+    if (!saved) return;
+    const parsed = JSON.parse(saved);
+    if (!Array.isArray(parsed)) return;
+    for (const spot of parsed) {
+      if (spot && spot.id && spot.name) {
+        customSpots.push(spot);
+        spots.push(spot);
+      }
+    }
+  } catch (e) {
+    console.warn("Could not load custom spots:", e);
+  }
+}
+
+function persistCustomSpots() {
+  try {
+    localStorage.setItem("bluegill_customSpots", JSON.stringify(customSpots));
+  } catch (e) {
+    console.warn("Could not save custom spots:", e);
+  }
+}
+
+// --- Add Spot modal ---
+
+let addSpotMap = null;
+let addSpotPin = null;
+
+function initAddSpotMap() {
+  if (addSpotMap) return;
+
+  addSpotMap = L.map("addSpotMap", {
+    scrollWheelZoom: true,
+    zoomControl: true
+  }).setView([33.11, -96.91], 13);
+
+  L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
+    attribution: '© <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>',
+    maxZoom: 19
+  }).addTo(addSpotMap);
+
+  addSpotMap.on("click", function (e) {
+    const { lat, lng } = e.latlng;
+    placeAddSpotPin(lat, lng);
+    document.getElementById("newSpotLat").value = lat.toFixed(6);
+    document.getElementById("newSpotLon").value = lng.toFixed(6);
+    clearCoordError();
+  });
+}
+
+function placeAddSpotPin(lat, lng) {
+  if (addSpotPin) {
+    addSpotPin.setLatLng([lat, lng]);
+  } else {
+    addSpotPin = L.marker([lat, lng]).addTo(addSpotMap);
+  }
+}
+
+function openAddSpotModal() {
+  const modal = document.getElementById("addSpotModal");
+  if (!modal) return;
+
+  modal.classList.remove("hidden");
+  document.body.style.overflow = "hidden";
+
+  document.getElementById("newSpotName").value = "";
+  document.getElementById("newSpotType").value = "";
+  document.getElementById("newSpotLat").value = "";
+  document.getElementById("newSpotLon").value = "";
+  document.getElementById("newSpotNotes").value = "";
+  clearCoordError();
+
+  if (addSpotPin) {
+    addSpotPin.remove();
+    addSpotPin = null;
+  }
+
+  // Give the DOM a moment to render the modal before Leaflet measures the container
+  setTimeout(() => {
+    if (!addSpotMap) {
+      initAddSpotMap();
+    } else {
+      addSpotMap.invalidateSize();
+    }
+
+    const currentSpot = spots[Number(spotSelect.value)];
+    if (currentSpot && typeof currentSpot.lat === "number") {
+      addSpotMap.setView([currentSpot.lat, currentSpot.lon], 14);
+    }
+  }, 60);
+}
+
+function closeAddSpotModal() {
+  const modal = document.getElementById("addSpotModal");
+  if (modal) modal.classList.add("hidden");
+  document.body.style.overflow = "";
+}
+
+function clearCoordError() {
+  const el = document.getElementById("coordError");
+  if (el) {
+    el.textContent = "";
+    el.classList.add("hidden");
+  }
+}
+
+function showCoordError(msg) {
+  const el = document.getElementById("coordError");
+  if (el) {
+    el.textContent = msg;
+    el.classList.remove("hidden");
+  }
+}
+
+function tryUpdateMapFromInputs() {
+  const latVal = parseFloat(document.getElementById("newSpotLat").value);
+  const lonVal = parseFloat(document.getElementById("newSpotLon").value);
+  clearCoordError();
+
+  if (isNaN(latVal) || isNaN(lonVal)) return;
+
+  if (latVal < -90 || latVal > 90) {
+    showCoordError("Latitude must be between -90 and 90.");
+    return;
+  }
+  if (lonVal < -180 || lonVal > 180) {
+    showCoordError("Longitude must be between -180 and 180.");
+    return;
+  }
+
+  if (!addSpotMap) return;
+  placeAddSpotPin(latVal, lonVal);
+  addSpotMap.setView([latVal, lonVal], Math.max(addSpotMap.getZoom(), 13));
+}
+
+function handleLatInput() {
+  const latInput = document.getElementById("newSpotLat");
+  const lonInput = document.getElementById("newSpotLon");
+  const value = latInput.value.trim();
+
+  // If a "lat, lon" pair was pasted into the lat field, split it automatically
+  if (value.includes(",")) {
+    const parts = value.split(",");
+    if (parts.length === 2) {
+      const pairLat = parseFloat(parts[0].trim());
+      const pairLon = parseFloat(parts[1].trim());
+      if (!isNaN(pairLat) && !isNaN(pairLon)) {
+        latInput.value = pairLat.toFixed(6);
+        lonInput.value = pairLon.toFixed(6);
+        tryUpdateMapFromInputs();
+        return;
+      }
+    }
+  }
+
+  tryUpdateMapFromInputs();
+}
+
+function saveNewSpot() {
+  const name = document.getElementById("newSpotName").value.trim();
+  const type = document.getElementById("newSpotType").value.trim();
+  const latStr = document.getElementById("newSpotLat").value.trim();
+  const lonStr = document.getElementById("newSpotLon").value.trim();
+  const notes = document.getElementById("newSpotNotes").value.trim();
+
+  if (!name) {
+    showCoordError("Please enter a spot name.");
+    document.getElementById("newSpotName").focus();
+    return;
+  }
+
+  const lat = parseFloat(latStr);
+  const lon = parseFloat(lonStr);
+
+  if (isNaN(lat) || isNaN(lon)) {
+    showCoordError("Please set a location by clicking the map or entering coordinates.");
+    return;
+  }
+
+  if (lat < -90 || lat > 90) {
+    showCoordError("Latitude must be between -90 and 90.");
+    return;
+  }
+  if (lon < -180 || lon > 180) {
+    showCoordError("Longitude must be between -180 and 180.");
+    return;
+  }
+
+  const newSpot = {
+    id: "custom-" + Date.now(),
+    name,
+    type: type || "Custom",
+    lat,
+    lon,
+    notes
+  };
+
+  spots.push(newSpot);
+  customSpots.push(newSpot);
+  persistCustomSpots();
+
+  populateSpots();
+  spotSelect.value = spots.length - 1;
+  updateSpotMap();
+
+  closeAddSpotModal();
+}
+
+document.getElementById("addSpotBtn").addEventListener("click", openAddSpotModal);
+document.getElementById("closeAddSpot").addEventListener("click", closeAddSpotModal);
+document.getElementById("cancelAddSpot").addEventListener("click", closeAddSpotModal);
+document.getElementById("saveNewSpot").addEventListener("click", saveNewSpot);
+
+document.getElementById("addSpotModal").addEventListener("click", function (e) {
+  if (e.target === this) closeAddSpotModal();
+});
+
+document.getElementById("newSpotLat").addEventListener("input", handleLatInput);
+document.getElementById("newSpotLon").addEventListener("input", tryUpdateMapFromInputs);
+
+// --- End Add Spot ---
+
 scoreHelp.classList.add("neutral-state");
+loadCustomSpots();
 populateSpots();
 initializeDatePicker();
+
+try {
+  initSpotMap();
+  spotSelect.addEventListener("change", updateSpotMap);
+} catch (e) {
+  console.warn("Spot map failed to initialize:", e);
+  const mapEl = document.getElementById("spotMap");
+  if (mapEl) {
+    mapEl.innerHTML = '<p class="spot-map-unavailable">Map preview unavailable right now.</p>';
+  }
+}
+
 forecastBtn.addEventListener("click", getForecast);

@@ -7,6 +7,7 @@
 
 
   <link rel="stylesheet" href="styles.css" />
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
 </head>
 <body>
   <main class="app">
@@ -19,6 +20,7 @@
       <div class="control-group">
         <label for="spotSelect">Choose a fishing spot</label>
         <select id="spotSelect"></select>
+        <button id="addSpotBtn" class="btn-add-spot" type="button">+ Add spot</button>
       </div>
 
       <div class="control-group">
@@ -30,6 +32,13 @@
       </div>
 
       <button id="forecastBtn">Get Forecast</button>
+    </section>
+
+    <section class="card spot-map-card">
+      <div class="spot-map-header">
+        <span id="spotMapLabel"></span>
+      </div>
+      <div id="spotMap"></div>
     </section>
 
     <section class="card">
@@ -70,6 +79,50 @@
 
   <div id="chartTooltip" class="chart-tooltip hidden"></div>
 
+  <div id="addSpotModal" class="modal-overlay hidden" role="dialog" aria-modal="true" aria-labelledby="addSpotTitle">
+    <div class="modal-panel">
+      <div class="modal-header">
+        <h2 id="addSpotTitle">Add a Spot</h2>
+        <button id="closeAddSpot" class="modal-close-btn" type="button" aria-label="Close">✕</button>
+      </div>
+      <div class="modal-body">
+        <div id="addSpotMap"></div>
+        <p class="modal-map-hint">Click the map to place a pin, or enter coordinates in the fields below.</p>
+        <div class="add-spot-form">
+          <div class="form-group">
+            <label for="newSpotName">Spot name</label>
+            <input type="text" id="newSpotName" placeholder="e.g. Bridge Pond" />
+          </div>
+          <div class="form-group">
+            <label for="newSpotType">Spot type</label>
+            <input type="text" id="newSpotType" placeholder="e.g. Pond, Lake Cove, River Bank" />
+          </div>
+          <div class="form-row">
+            <div class="form-group">
+              <label for="newSpotLat">Latitude</label>
+              <input type="text" id="newSpotLat" placeholder="e.g. 33.1108" />
+            </div>
+            <div class="form-group">
+              <label for="newSpotLon">Longitude</label>
+              <input type="text" id="newSpotLon" placeholder="e.g. -96.9142" />
+            </div>
+          </div>
+          <p class="modal-coord-hint">You can also paste a coordinate pair like <code>33.1108, -96.9142</code> into the Latitude field.</p>
+          <div id="coordError" class="coord-error hidden"></div>
+          <div class="form-group">
+            <label for="newSpotNotes">Notes</label>
+            <textarea id="newSpotNotes" rows="3" placeholder="Optional notes about this spot"></textarea>
+          </div>
+          <div class="modal-actions">
+            <button id="saveNewSpot" type="button">Save Spot</button>
+            <button id="cancelAddSpot" class="btn-secondary" type="button">Cancel</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
   <script src="spots.js"></script>
   <script src="app.js"></script>
 </body>
