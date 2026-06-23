@@ -12,6 +12,30 @@ const selectedHourDetails = document.getElementById("selectedHourDetails");
 
 const MAX_FORECAST_DAYS = 16;
 
+// --- Spot type helpers ---
+
+const TYPE_ORDER = ["Pond", "Lake Cove", "Creek", "River", "Boat Launch", "Other"];
+
+const TYPE_PLURAL = {
+  "Pond": "Ponds",
+  "Lake Cove": "Lake Coves",
+  "Creek": "Creeks",
+  "River": "Rivers",
+  "Boat Launch": "Boat Launches",
+  "Other": "Other"
+};
+
+function normalizeSpotType(raw) {
+  const lower = String(raw || "").trim().toLowerCase();
+  const known = TYPE_ORDER.find(t => t.toLowerCase() === lower);
+  return known || (lower ? "Other" : "Other");
+}
+
+function getAvailableTypeFilters() {
+  const typeSet = new Set(spots.map(s => normalizeSpotType(s.type)));
+  return TYPE_ORDER.filter(t => typeSet.has(t));
+}
+
 const MOON_SCORING = {
   fullNewBoost: 0.5,
   nearPhaseBoost: 0.25,
@@ -23,15 +47,54 @@ const MOON_SCORING = {
   minorWindowMinutes: 60
 };
 
-function populateSpots() {
+function populateSpots(preserveValue) {
+  const prevValue = preserveValue !== undefined ? String(preserveValue) : spotSelect.value;
   spotSelect.innerHTML = "";
 
-  spots.forEach((spot, index) => {
-    const option = document.createElement("option");
-    option.value = index;
-    option.textContent = spot.name;
-    spotSelect.appendChild(option);
-  });
+  const indexed = spots.map((spot, index) => ({ spot, index }));
+  const favItems = indexed.filter(({ spot }) => favorites.has(spot.id));
+  const restItems = indexed.filter(({ spot }) => !favorites.has(spot.id));
+
+  function makeOption(spot, index) {
+    const opt = document.createElement("option");
+    opt.value = index;
+    opt.textContent = spot.name;
+    return opt;
+  }
+
+  if (favItems.length > 0) {
+    const favGroup = document.createElement("optgroup");
+    favGroup.label = "★ Favorites";
+    favItems.forEach(({ spot, index }) => favGroup.appendChild(makeOption(spot, index)));
+    spotSelect.appendChild(favGroup);
+  }
+
+  // Group non-favorites by normalized type
+  const byType = {};
+  for (const item of restItems) {
+    const type = normalizeSpotType(item.spot.type);
+    if (!byType[type]) byType[type] = [];
+    byType[type].push(item);
+  }
+
+  for (const type of TYPE_ORDER) {
+    const items = byType[type];
+    if (!items || items.length === 0) continue;
+    const group = document.createElement("optgroup");
+    group.label = TYPE_PLURAL[type] || type;
+    items.forEach(({ spot, index }) => group.appendChild(makeOption(spot, index)));
+    spotSelect.appendChild(group);
+  }
+
+  // Flat fallback if no groups were added (no favorites, no typed spots)
+  if (spotSelect.children.length === 0) {
+    spots.forEach((spot, index) => spotSelect.appendChild(makeOption(spot, index)));
+  }
+
+  if (prevValue !== "" && prevValue != null) {
+    spotSelect.value = prevValue;
+    if (!spotSelect.value && spots.length > 0) spotSelect.value = "0";
+  }
 }
 
 function toIsoLocalDate(date = new Date()) {
@@ -1314,6 +1377,223 @@ async function getForecast() {
 let spotMap = null;
 let spotMarker = null;
 
+const favorites = new Set();
+
+function loadFavorites() {
+  try {
+    const saved = localStorage.getItem("bluegill_favorites");
+    if (!saved) return;
+    const parsed = JSON.parse(saved);
+    if (Array.isArray(parsed)) parsed.forEach(id => favorites.add(id));
+  } catch (e) {
+    console.warn("Could not load favorites:", e);
+  }
+}
+
+function persistFavorites() {
+  try {
+    localStorage.setItem("bluegill_favorites", JSON.stringify([...favorites]));
+  } catch (e) {
+    console.warn("Could not save favorites:", e);
+  }
+}
+
+function toggleFavorite(spotId) {
+  if (favorites.has(spotId)) {
+    favorites.delete(spotId);
+  } else {
+    favorites.add(spotId);
+  }
+  persistFavorites();
+  const prevValue = spotSelect.value;
+  populateSpots(prevValue);
+  updateSpotMap();
+  renderMySpotsList();
+}
+
+function openMySpotsModal() {
+  const modal = document.getElementById("mySpotsModal");
+  if (!modal) return;
+  renderMySpotsList();
+  modal.classList.remove("hidden");
+  document.body.style.overflow = "hidden";
+}
+
+function closeMySpotsModal() {
+  const modal = document.getElementById("mySpotsModal");
+  if (modal) modal.classList.add("hidden");
+  document.body.style.overflow = "";
+}
+
+function isCustomSpot(spot) {
+  return typeof spot.id === "string" && spot.id.startsWith("custom-");
+}
+
+let mySpotsActiveFilter = "All";
+
+function renderSpotCard({ spot, index }) {
+  const isFav = favorites.has(spot.id);
+  const custom = isCustomSpot(spot);
+  const notesHtml = spot.notes
+    ? `<div class="my-spot-notes">${escapeHtml(spot.notes)}</div>`
+    : "";
+
+  return `
+    <div class="my-spot-card">
+      <button
+        class="btn-favorite${isFav ? " active" : ""}"
+        data-spot-id="${escapeHtml(spot.id)}"
+        aria-label="${isFav ? "Remove from favorites" : "Add to favorites"}"
+        type="button"
+      >${isFav ? "★" : "☆"}</button>
+      <div class="my-spot-main">
+        <div class="my-spot-name">${escapeHtml(spot.name)}</div>
+        <div class="my-spot-type">${escapeHtml(normalizeSpotType(spot.type))}</div>
+        ${notesHtml}
+      </div>
+      <div class="my-spot-actions">
+        <button class="btn-spot-action btn-spot-select" data-spot-index="${index}" type="button">Select</button>
+        ${custom ? `
+          <button class="btn-spot-action btn-spot-edit" data-spot-index="${index}" type="button">Edit</button>
+          <button class="btn-spot-action btn-spot-delete" data-spot-index="${index}" type="button">Delete</button>
+        ` : ""}
+      </div>
+    </div>
+  `;
+}
+
+function renderMySpotsList() {
+  const output = document.getElementById("mySpotsListOutput");
+  if (!output) return;
+
+  if (spots.length === 0) {
+    output.innerHTML = "<p>No spots saved yet.</p>";
+    return;
+  }
+
+  const availableTypes = getAvailableTypeFilters();
+  const hasFavorites = spots.some(s => favorites.has(s.id));
+  const filterOptions = ["All", ...(hasFavorites ? ["Favorites"] : []), ...availableTypes];
+
+  // Reset active filter if it no longer applies
+  if (!filterOptions.includes(mySpotsActiveFilter)) mySpotsActiveFilter = "All";
+
+  const filterBarHtml = `
+    <div class="spot-filter-bar">
+      ${filterOptions.map(f => `
+        <button class="spot-filter-chip${mySpotsActiveFilter === f ? " active" : ""}" data-filter="${escapeHtml(f)}" type="button">
+          ${f === "Favorites" ? "★ " : ""}${escapeHtml(f)}
+        </button>
+      `).join("")}
+    </div>
+  `;
+
+  const indexed = spots.map((spot, index) => ({ spot, index }));
+
+  let filtered;
+  if (mySpotsActiveFilter === "All") {
+    filtered = indexed;
+  } else if (mySpotsActiveFilter === "Favorites") {
+    filtered = indexed.filter(({ spot }) => favorites.has(spot.id));
+  } else {
+    filtered = indexed.filter(({ spot }) => normalizeSpotType(spot.type) === mySpotsActiveFilter);
+  }
+
+  let listHtml;
+  if (filtered.length === 0) {
+    listHtml = `<p class="my-spots-empty">No spots in this category.</p>`;
+  } else if (mySpotsActiveFilter === "All") {
+    // Favorites first, then group remaining by type with section headers
+    const favItems = filtered.filter(({ spot }) => favorites.has(spot.id));
+    const restItems = filtered.filter(({ spot }) => !favorites.has(spot.id));
+
+    const byType = {};
+    for (const item of restItems) {
+      const type = normalizeSpotType(item.spot.type);
+      if (!byType[type]) byType[type] = [];
+      byType[type].push(item);
+    }
+
+    let sections = "";
+    if (favItems.length > 0) {
+      sections += `<div class="my-spots-section-header">★ Favorites</div>`;
+      sections += favItems.map(item => renderSpotCard(item)).join("");
+    }
+    for (const type of TYPE_ORDER) {
+      const items = byType[type];
+      if (!items || items.length === 0) continue;
+      sections += `<div class="my-spots-section-header">${escapeHtml(TYPE_PLURAL[type] || type)}</div>`;
+      sections += items.map(item => renderSpotCard(item)).join("");
+    }
+    listHtml = sections;
+  } else {
+    listHtml = filtered.map(item => renderSpotCard(item)).join("");
+  }
+
+  output.innerHTML = filterBarHtml + listHtml;
+
+  output.querySelectorAll(".spot-filter-chip").forEach(btn => {
+    btn.addEventListener("click", () => {
+      mySpotsActiveFilter = btn.dataset.filter;
+      renderMySpotsList();
+    });
+  });
+
+  output.querySelectorAll(".btn-favorite").forEach(btn => {
+    btn.addEventListener("click", () => toggleFavorite(btn.dataset.spotId));
+  });
+
+  output.querySelectorAll(".btn-spot-select").forEach(btn => {
+    btn.addEventListener("click", () => {
+      spotSelect.value = btn.dataset.spotIndex;
+      updateSpotMap();
+      closeMySpotsModal();
+    });
+  });
+
+  output.querySelectorAll(".btn-spot-edit").forEach(btn => {
+    btn.addEventListener("click", () => {
+      const idx = Number(btn.dataset.spotIndex);
+      closeMySpotsModal();
+      openAddSpotModal(idx);
+    });
+  });
+
+  output.querySelectorAll(".btn-spot-delete").forEach(btn => {
+    btn.addEventListener("click", () => deleteCustomSpot(Number(btn.dataset.spotIndex)));
+  });
+}
+
+function deleteCustomSpot(spotIndex) {
+  const spot = spots[spotIndex];
+  if (!spot || !isCustomSpot(spot)) return;
+
+  if (!confirm(`Delete "${spot.name}"? This cannot be undone.`)) return;
+
+  const currentValue = Number(spotSelect.value);
+
+  spots.splice(spotIndex, 1);
+  const customIdx = customSpots.findIndex(s => s.id === spot.id);
+  if (customIdx !== -1) customSpots.splice(customIdx, 1);
+  favorites.delete(spot.id);
+
+  persistCustomSpots();
+  persistFavorites();
+
+  let newValue;
+  if (currentValue === spotIndex) {
+    newValue = 0;
+  } else if (currentValue > spotIndex) {
+    newValue = currentValue - 1;
+  } else {
+    newValue = currentValue;
+  }
+
+  populateSpots(String(newValue));
+  updateSpotMap();
+  renderMySpotsList();
+}
+
 function initSpotMap() {
   if (typeof L === "undefined") {
     throw new Error("Leaflet did not load.");
@@ -1384,10 +1664,11 @@ function persistCustomSpots() {
   }
 }
 
-// --- Add Spot modal ---
+// --- Add / Edit Spot modal ---
 
 let addSpotMap = null;
 let addSpotPin = null;
+let editingSpotIndex = null;
 
 function initAddSpotMap() {
   if (addSpotMap) return;
@@ -1419,18 +1700,37 @@ function placeAddSpotPin(lat, lng) {
   }
 }
 
-function openAddSpotModal() {
+function openAddSpotModal(editIndex) {
+  editingSpotIndex = editIndex !== undefined ? editIndex : null;
+
   const modal = document.getElementById("addSpotModal");
   if (!modal) return;
 
   modal.classList.remove("hidden");
   document.body.style.overflow = "hidden";
 
-  document.getElementById("newSpotName").value = "";
-  document.getElementById("newSpotType").value = "";
-  document.getElementById("newSpotLat").value = "";
-  document.getElementById("newSpotLon").value = "";
-  document.getElementById("newSpotNotes").value = "";
+  const titleEl = document.getElementById("addSpotTitle");
+  const saveBtnEl = document.getElementById("saveNewSpot");
+
+  if (editingSpotIndex !== null) {
+    const spot = spots[editingSpotIndex];
+    document.getElementById("newSpotName").value = spot.name || "";
+    document.getElementById("newSpotType").value = spot.type || "";
+    document.getElementById("newSpotLat").value = spot.lat || "";
+    document.getElementById("newSpotLon").value = spot.lon || "";
+    document.getElementById("newSpotNotes").value = spot.notes || "";
+    if (titleEl) titleEl.textContent = "Edit Spot";
+    if (saveBtnEl) saveBtnEl.textContent = "Save Changes";
+  } else {
+    document.getElementById("newSpotName").value = "";
+    document.getElementById("newSpotType").value = "";
+    document.getElementById("newSpotLat").value = "";
+    document.getElementById("newSpotLon").value = "";
+    document.getElementById("newSpotNotes").value = "";
+    if (titleEl) titleEl.textContent = "Add a Spot";
+    if (saveBtnEl) saveBtnEl.textContent = "Save Spot";
+  }
+
   clearCoordError();
 
   if (addSpotPin) {
@@ -1438,7 +1738,6 @@ function openAddSpotModal() {
     addSpotPin = null;
   }
 
-  // Give the DOM a moment to render the modal before Leaflet measures the container
   setTimeout(() => {
     if (!addSpotMap) {
       initAddSpotMap();
@@ -1446,9 +1745,17 @@ function openAddSpotModal() {
       addSpotMap.invalidateSize();
     }
 
-    const currentSpot = spots[Number(spotSelect.value)];
-    if (currentSpot && typeof currentSpot.lat === "number") {
-      addSpotMap.setView([currentSpot.lat, currentSpot.lon], 14);
+    if (editingSpotIndex !== null) {
+      const spot = spots[editingSpotIndex];
+      if (typeof spot.lat === "number") {
+        addSpotMap.setView([spot.lat, spot.lon], 14);
+        placeAddSpotPin(spot.lat, spot.lon);
+      }
+    } else {
+      const currentSpot = spots[Number(spotSelect.value)];
+      if (currentSpot && typeof currentSpot.lat === "number") {
+        addSpotMap.setView([currentSpot.lat, currentSpot.lon], 14);
+      }
     }
   }, 60);
 }
@@ -1549,6 +1856,25 @@ function saveNewSpot() {
     return;
   }
 
+  if (editingSpotIndex !== null) {
+    const spot = spots[editingSpotIndex];
+    spot.name = name;
+    spot.type = type || "Custom";
+    spot.lat = lat;
+    spot.lon = lon;
+    spot.notes = notes;
+
+    const customIdx = customSpots.findIndex(s => s.id === spot.id);
+    if (customIdx !== -1) customSpots[customIdx] = { ...spot };
+
+    persistCustomSpots();
+    populateSpots(String(editingSpotIndex));
+    updateSpotMap();
+    closeAddSpotModal();
+    openMySpotsModal();
+    return;
+  }
+
   const newSpot = {
     id: "custom-" + Date.now(),
     name,
@@ -1569,10 +1895,16 @@ function saveNewSpot() {
   closeAddSpotModal();
 }
 
-document.getElementById("addSpotBtn").addEventListener("click", openAddSpotModal);
+document.getElementById("addSpotBtn").addEventListener("click", () => openAddSpotModal());
 document.getElementById("closeAddSpot").addEventListener("click", closeAddSpotModal);
 document.getElementById("cancelAddSpot").addEventListener("click", closeAddSpotModal);
 document.getElementById("saveNewSpot").addEventListener("click", saveNewSpot);
+document.getElementById("mySpotsBtn").addEventListener("click", openMySpotsModal);
+document.getElementById("closeMySpotsBtn").addEventListener("click", closeMySpotsModal);
+
+document.getElementById("mySpotsModal").addEventListener("click", function (e) {
+  if (e.target === this) closeMySpotsModal();
+});
 
 document.getElementById("addSpotModal").addEventListener("click", function (e) {
   if (e.target === this) closeAddSpotModal();
@@ -1584,6 +1916,7 @@ document.getElementById("newSpotLon").addEventListener("input", tryUpdateMapFrom
 // --- End Add Spot ---
 
 scoreHelp.classList.add("neutral-state");
+loadFavorites();
 loadCustomSpots();
 populateSpots();
 initializeDatePicker();

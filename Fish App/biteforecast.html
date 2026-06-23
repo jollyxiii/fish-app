@@ -20,7 +20,10 @@
       <div class="control-group">
         <label for="spotSelect">Choose a fishing spot</label>
         <select id="spotSelect"></select>
-        <button id="addSpotBtn" class="btn-add-spot" type="button">+ Add spot</button>
+        <div class="spot-btn-row">
+          <button id="addSpotBtn" class="btn-add-spot" type="button">+ Add spot</button>
+          <button id="mySpotsBtn" class="btn-add-spot btn-my-spots" type="button">My Spots</button>
+        </div>
       </div>
 
       <div class="control-group">
@@ -115,6 +118,18 @@
             <button id="cancelAddSpot" class="btn-secondary" type="button">Cancel</button>
           </div>
         </div>
+      </div>
+    </div>
+  </div>
+
+  <div id="mySpotsModal" class="modal-overlay hidden" role="dialog" aria-modal="true" aria-labelledby="mySpotsTitle">
+    <div class="modal-panel">
+      <div class="modal-header">
+        <h2 id="mySpotsTitle">My Spots</h2>
+        <button id="closeMySpotsBtn" class="modal-close-btn" type="button" aria-label="Close">✕</button>
+      </div>
+      <div class="modal-body my-spots-body">
+        <div id="mySpotsListOutput"></div>
       </div>
     </div>
   </div>

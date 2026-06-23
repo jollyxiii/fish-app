@@ -1005,3 +1005,224 @@ li {
     grid-template-columns: 1fr;
   }
 }
+
+/* --- Spot button row --- */
+
+.spot-btn-row {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-top: 8px;
+}
+
+.spot-btn-row .btn-add-spot {
+  margin-top: 0;
+}
+
+.btn-my-spots {
+  background: transparent;
+  color: var(--text);
+  border-color: var(--border);
+}
+
+.btn-my-spots:hover {
+  background: var(--card-alt);
+  transform: translateY(-1px);
+}
+
+/* --- My Spots modal --- */
+
+.my-spots-body {
+  padding-top: 4px;
+}
+
+.spot-filter-bar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 4px 0 16px;
+}
+
+.spot-filter-chip {
+  padding: 5px 14px;
+  background: var(--card-alt);
+  color: var(--muted);
+  border: 1.5px solid var(--border);
+  border-radius: 999px;
+  font-size: 0.85rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background var(--transition), color var(--transition), border-color var(--transition);
+  white-space: nowrap;
+}
+
+.spot-filter-chip:hover {
+  background: var(--accent-soft);
+  color: var(--accent-dark);
+  border-color: var(--accent);
+}
+
+.spot-filter-chip.active {
+  background: var(--accent);
+  color: #fff;
+  border-color: var(--accent);
+}
+
+.my-spots-section-header {
+  padding: 10px 0 4px;
+  color: var(--muted);
+  font-size: 0.78rem;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  border-bottom: 1px solid var(--border);
+  margin-bottom: 2px;
+}
+
+.my-spots-section-header:first-child {
+  padding-top: 0;
+}
+
+.my-spots-empty {
+  color: var(--muted);
+  font-size: 0.92rem;
+  padding: 12px 0;
+}
+
+.my-spot-card {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 14px 0;
+  border-bottom: 1px solid var(--border);
+}
+
+.my-spot-card:last-child {
+  border-bottom: none;
+}
+
+.btn-favorite {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 36px;
+  width: 36px;
+  padding: 0;
+  background: transparent;
+  color: #b8c4bc;
+  border: 1.5px solid var(--border);
+  border-radius: 8px;
+  font-size: 1.1rem;
+  line-height: 1;
+  cursor: pointer;
+  transition: color var(--transition), border-color var(--transition), background var(--transition);
+}
+
+.btn-favorite:hover {
+  color: var(--fair);
+  border-color: var(--fair);
+  background: #fbf4e5;
+  transform: none;
+}
+
+.btn-favorite.active {
+  color: var(--fair);
+  border-color: #edd9a8;
+  background: #fbf4e5;
+}
+
+.my-spot-main {
+  flex: 1;
+  min-width: 0;
+}
+
+.my-spot-name {
+  color: var(--text);
+  font-size: 1rem;
+  font-weight: 600;
+  line-height: 1.3;
+}
+
+.my-spot-type {
+  margin-top: 2px;
+  color: var(--muted);
+  font-size: 0.85rem;
+}
+
+.my-spot-notes {
+  margin-top: 4px;
+  color: var(--muted);
+  font-size: 0.82rem;
+  line-height: 1.35;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.my-spot-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  flex-shrink: 0;
+}
+
+.btn-spot-action {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 30px;
+  padding: 4px 12px;
+  border-radius: 8px;
+  font-size: 0.82rem;
+  font-weight: 600;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: background var(--transition), color var(--transition), transform var(--transition);
+}
+
+.btn-spot-select {
+  background: var(--accent);
+  color: #fff;
+  border: none;
+}
+
+.btn-spot-select:hover {
+  background: var(--accent-dark);
+  transform: none;
+}
+
+.btn-spot-edit {
+  background: transparent;
+  color: var(--text);
+  border: 1.5px solid var(--border);
+}
+
+.btn-spot-edit:hover {
+  background: var(--card-alt);
+  transform: none;
+}
+
+.btn-spot-delete {
+  background: transparent;
+  color: var(--tough);
+  border: 1.5px solid #efc8cf;
+}
+
+.btn-spot-delete:hover {
+  background: #fbecef;
+  transform: none;
+}
+
+@media (max-width: 520px) {
+  .my-spot-card {
+    flex-wrap: wrap;
+  }
+
+  .my-spot-actions {
+    flex-direction: row;
+    flex-wrap: wrap;
+    width: 100%;
+  }
+}
