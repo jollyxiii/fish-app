@@ -23,6 +23,8 @@
         <div class="spot-btn-row">
           <button id="addSpotBtn" class="btn-add-spot" type="button">+ Add spot</button>
           <button id="mySpotsBtn" class="btn-add-spot btn-my-spots" type="button">My Spots</button>
+          <button id="tripLogBtn" class="btn-add-spot btn-my-spots" type="button">Trip Log</button>
+          <button id="insightsBtn" class="btn-add-spot btn-my-spots" type="button">Insights</button>
         </div>
       </div>
 
@@ -73,6 +75,9 @@
       <h2>Selected hour</h2>
       <div id="selectedHourDetails" class="selected-hour-card empty">
         <p>Click any bar in the hourly chart to pin its details here.</p>
+      </div>
+      <div class="log-trip-row">
+        <button id="logTripBtn" class="btn-add-spot" type="button">Log Trip Result</button>
       </div>
     </section>
   </main>
@@ -130,6 +135,87 @@
       </div>
       <div class="modal-body my-spots-body">
         <div id="mySpotsListOutput"></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Log Trip Result modal -->
+  <div id="logTripModal" class="modal-overlay hidden" role="dialog" aria-modal="true" aria-labelledby="logTripTitle">
+    <div class="modal-panel modal-panel--sm">
+      <div class="modal-header">
+        <h2 id="logTripTitle">Log Trip Result</h2>
+        <button id="closeLogTrip" class="modal-close-btn" type="button" aria-label="Close">✕</button>
+      </div>
+      <div class="modal-body">
+        <div class="trip-context">
+          <div class="trip-context-item">
+            <span class="trip-context-label">Spot</span>
+            <span id="ltSpotName" class="trip-context-value">—</span>
+          </div>
+          <div class="trip-context-item">
+            <span class="trip-context-label">Date</span>
+            <span id="ltDate" class="trip-context-value">—</span>
+          </div>
+          <div class="trip-context-item">
+            <span class="trip-context-label">Hour</span>
+            <span id="ltTime" class="trip-context-value">—</span>
+          </div>
+          <div class="trip-context-item">
+            <span class="trip-context-label">Forecasted Score</span>
+            <span id="ltScore" class="trip-context-value">—</span>
+          </div>
+        </div>
+        <div class="add-spot-form">
+          <div class="form-group">
+            <label>How was the bite?</label>
+            <div class="result-chips" id="resultChips">
+              <button type="button" class="result-chip" data-result="Dead">Dead</button>
+              <button type="button" class="result-chip" data-result="Slow">Slow</button>
+              <button type="button" class="result-chip" data-result="Fair">Fair</button>
+              <button type="button" class="result-chip" data-result="Good">Good</button>
+              <button type="button" class="result-chip" data-result="Hot">Hot</button>
+            </div>
+          </div>
+          <div class="form-group">
+            <label for="ltFishCount">Fish caught (optional)</label>
+            <input type="number" id="ltFishCount" min="0" placeholder="e.g. 8" />
+          </div>
+          <div class="form-group">
+            <label for="ltNotes">Notes (optional)</label>
+            <textarea id="ltNotes" rows="3" placeholder="What worked? Bait, depth, conditions..."></textarea>
+          </div>
+          <div id="ltError" class="coord-error hidden">Please select a bite result before saving.</div>
+          <div class="modal-actions">
+            <button id="saveLogTrip" type="button">Save Result</button>
+            <button id="cancelLogTrip" class="btn-secondary" type="button">Cancel</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Trip Log viewer modal -->
+  <div id="tripLogModal" class="modal-overlay hidden" role="dialog" aria-modal="true" aria-labelledby="tripLogTitle">
+    <div class="modal-panel">
+      <div class="modal-header">
+        <h2 id="tripLogTitle">Trip Log</h2>
+        <button id="closeTripLogBtn" class="modal-close-btn" type="button" aria-label="Close">✕</button>
+      </div>
+      <div class="modal-body my-spots-body">
+        <div id="tripLogListOutput"></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Trip Log Insights modal -->
+  <div id="insightsModal" class="modal-overlay hidden" role="dialog" aria-modal="true" aria-labelledby="insightsTitle">
+    <div class="modal-panel">
+      <div class="modal-header">
+        <h2 id="insightsTitle">Trip Log Insights</h2>
+        <button id="closeInsightsBtn" class="modal-close-btn" type="button" aria-label="Close">✕</button>
+      </div>
+      <div class="modal-body my-spots-body">
+        <div id="insightsOutput"></div>
       </div>
     </div>
   </div>

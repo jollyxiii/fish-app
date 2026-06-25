@@ -36,15 +36,49 @@ function getAvailableTypeFilters() {
   return TYPE_ORDER.filter(t => typeSet.has(t));
 }
 
+// ─── BiteScore model constants ─────────────────────────────────────────────
+// Edit these values to tune the model after comparing forecasts to real results.
+
+const SCORE_BASE = 4;
+
+// Max points each factor can contribute (positive or negative) to the base.
+// Time of day and pressure are the strongest levers by design.
+const SCORE_WEIGHTS = {
+  timeOfDay:   1.8,  // dawn/dusk windows vs midday heat
+  pressure:    1.5,  // stability and trend
+  temperature: 1.2,  // season-aware air temp suitability
+  cloudCover:  0.8,  // glare and light conditions
+  wind:        0.8,  // surface disturbance
+  moon:        0.7,  // minor solunar nudge only
+  spotType:    0.4,  // small per-type habitat adjustment
+};
+
+// Season boundaries (month numbers, 1-based)
+const SEASON_MONTHS = {
+  spring: [3, 4, 5],
+  summer: [6, 7, 8],
+  fall:   [9, 10, 11],
+  winter: [12, 1, 2],
+};
+
+// Temperature thresholds (°F) — adjust if you find the score is off for your water
+const TEMP_CONFIG = {
+  peakLow:    65,   // bottom of ideal bluegill range
+  peakHigh:   82,   // top of ideal range
+  coldCutoff: 50,   // below this: very sluggish
+  heatCutoff: 93,   // above this: heat stress, slow bite
+};
+
+// Moon / solunar — kept intentionally modest so it never dominates the score
 const MOON_SCORING = {
-  fullNewBoost: 0.5,
-  nearPhaseBoost: 0.25,
-  majorBoost: 1,
-  minorBoost: 0.5,
-  overlapBoost: 0.5,
-  maxTotalBoost: 1.5,
+  fullNewBoost:       0.35,
+  nearPhaseBoost:     0.15,
+  majorBoost:         0.45,  // reduced from 1.0 — moon is a nudge, not a swing
+  minorBoost:         0.20,
+  overlapBoost:       0.15,
+  maxTotalBoost:      0.70,  // hard cap before weight is applied
   majorWindowMinutes: 90,
-  minorWindowMinutes: 60
+  minorWindowMinutes: 60,
 };
 
 function populateSpots(preserveValue) {
@@ -355,122 +389,281 @@ function getSolunarBoost(data) {
   };
 }
 
-function calculateBiteScore(data) {
-  let score = 5;
+// ─── BiteScore helper functions ────────────────────────────────────────────
+
+function getSeason(month) {
+  if (SEASON_MONTHS.spring.includes(month)) return "spring";
+  if (SEASON_MONTHS.summer.includes(month)) return "summer";
+  if (SEASON_MONTHS.fall.includes(month))   return "fall";
+  return "winter";
+}
+
+// Returns a normalized score (-1 to +1) for time of day.
+// Dawn and dusk are the primary feeding windows for bluegill.
+// Winter reverses the pattern — midday warmth matters more than early light.
+function getTimeOfDayScore(hour, minutesFromSunrise, minutesToSunset, month) {
+  const season = getSeason(month);
+  const nearSunrise = Math.abs(minutesFromSunrise) <= 90;
+  const nearSunset  = Math.abs(minutesToSunset)   <= 90;
   const reasons = [];
+  let score = 0;
 
-  const temp = data.temperature;
-  const apparentTemp = data.apparentTemperature;
-  const cloud = data.cloudCover;
-  const wind = data.windSpeed;
-  const humidity = data.relativeHumidity;
-  const precipitation = data.precipitation;
-  const precipProbability = data.precipitationProbability;
-  const pressure = data.pressureMsl;
-  const pressureTrend3h = data.pressureTrend3h;
-  const shortwaveRadiation = data.shortwaveRadiation;
-  const isDay = data.isDay;
-  const minutesFromSunrise = data.minutesFromSunrise;
-  const minutesToSunset = data.minutesToSunset;
-  const hour = new Date(data.time).getHours();
-
-  if (Math.abs(minutesFromSunrise) <= 90) {
-    score += 2;
-    reasons.push("Prime low-light window around sunrise.");
+  if (nearSunrise) {
+    score += 0.9;
+    reasons.push("Low-light feeding window around sunrise.");
   }
 
-  if (Math.abs(minutesToSunset) <= 90) {
-    score += 2;
-    reasons.push("Prime low-light window around sunset.");
+  if (nearSunset) {
+    score += 0.9;
+    reasons.push("Low-light feeding window around sunset.");
   }
 
-  if (hour >= 10 && hour <= 16 && isDay === 1 && shortwaveRadiation >= 600) {
-    score -= 1;
-    reasons.push("Bright midday sun can push bluegill tighter to cover.");
+  // Soft bonus for the pre-dawn hour before sunrise kicks in
+  if (!nearSunrise && hour >= 5 && hour <= 6) {
+    score += 0.2;
+    reasons.push("Early morning pre-dawn period.");
   }
 
-  if (cloud >= 25 && cloud <= 70) {
-    score += 1;
-    reasons.push("Moderate cloud cover can extend feeding activity.");
-  } else if (cloud > 90 && precipitation === 0) {
-    score -= 1;
-    reasons.push("Thick overcast without other positives may slow activity.");
-  }
-
-  if (wind >= 3 && wind <= 10) {
-    score += 1;
-    reasons.push("Light to moderate wind can improve feeding.");
-  } else if (wind > 15) {
-    score -= 1;
-    reasons.push("Strong wind can make bites less predictable.");
-  }
-
-  if (temp >= 68 && temp <= 84) {
-    score += 1;
-    reasons.push("Water-warming air temperatures look favorable for bluegill.");
-  } else if (temp < 58 || temp > 92) {
-    score -= 2;
-    reasons.push("Air temperature is less favorable for active feeding.");
-  }
-
-  if (apparentTemp >= 68 && apparentTemp <= 86) {
-    score += 1;
-    reasons.push("Feels-like conditions are in a comfortable feeding range.");
-  } else if (apparentTemp > 95) {
-    score -= 1;
-    reasons.push("High heat can reduce comfortable shallow feeding periods.");
-  }
-
-  if (humidity >= 45 && humidity <= 80) {
-    score += 0.5;
-    reasons.push("Humidity suggests stable enough surface conditions.");
-  }
-
-  if (precipitation > 0 && precipitation <= 0.1) {
-    score += 1;
-    reasons.push("Light rain can improve activity without heavily disturbing the water.");
-  } else if (precipitation > 0.3) {
-    score -= 1;
-    reasons.push("Heavier rain may reduce visibility and bite consistency.");
-  }
-
-  if (precipProbability >= 40 && precipProbability <= 70 && precipitation === 0) {
-    score += 0.5;
-    reasons.push("Pre-storm conditions can sometimes increase feeding.");
-  }
-
-  if (pressure !== null && pressure !== undefined) {
-    if (pressure >= 1008 && pressure <= 1018) {
+  // Midday behavior varies by season
+  if (hour >= 10 && hour <= 15) {
+    if (season === "summer") {
+      score -= 0.8;
+      reasons.push("Midday summer heat suppresses shallow feeding.");
+    } else if (season === "winter") {
       score += 0.5;
-      reasons.push("Pressure is in a relatively fishable range.");
-    } else if (pressure < 1000 || pressure > 1025) {
-      score -= 0.5;
-      reasons.push("Pressure is on the more extreme side.");
+      reasons.push("Winter midday warmth is the best window for active feeding.");
+    }
+    // Spring and fall midday: neutral (no adjustment needed)
+  }
+
+  // Deep night — fish rest, very little surface activity
+  if (hour >= 22 || hour <= 3) {
+    score -= 0.35;
+    reasons.push("Late night / pre-dawn hours — generally slow for bluegill.");
+  }
+
+  return { score: clamp(score, -1, 1), reasons };
+}
+
+// Season-aware temperature score.
+// Bluegill peak activity: 65–82°F. Outside that range, score slides down.
+function getTemperatureScore(temp, month) {
+  const season = getSeason(month);
+  const reasons = [];
+  let score = 0;
+
+  if (temp >= TEMP_CONFIG.peakLow && temp <= TEMP_CONFIG.peakHigh) {
+    score = 1.0;
+    reasons.push("Air temperature is in the ideal bluegill activity range.");
+  } else if (temp > TEMP_CONFIG.peakHigh && temp <= TEMP_CONFIG.heatCutoff) {
+    // Warm but above peak — sliding penalty
+    const excess = temp - TEMP_CONFIG.peakHigh;
+    const range  = TEMP_CONFIG.heatCutoff - TEMP_CONFIG.peakHigh;
+    score = 1.0 - (excess / range);
+    if (score < 0.3) {
+      reasons.push("Hot air temperature is reducing comfortable surface feeding.");
+    } else {
+      reasons.push("Warm air — still within a manageable range for bluegill.");
+    }
+  } else if (temp > TEMP_CONFIG.heatCutoff) {
+    score = -1.0;
+    reasons.push("Extreme heat — midday bite unlikely in shallow water.");
+  } else if (temp < TEMP_CONFIG.coldCutoff) {
+    score = -1.0;
+    reasons.push("Cold air temperature — bluegill likely sluggish.");
+  } else {
+    // Cool range: 50–65°F
+    const ratio = (temp - TEMP_CONFIG.coldCutoff) / (TEMP_CONFIG.peakLow - TEMP_CONFIG.coldCutoff);
+    score = ratio * 0.8 - 0.3; // roughly -0.3 to +0.5
+    if (season === "winter" && temp >= 56) {
+      score += 0.3;
+      reasons.push("Cool but relatively warm for winter — afternoon window is possible.");
+    } else {
+      reasons.push("Cool temperatures may slow bluegill activity.");
+    }
+  }
+
+  return { score: clamp(score, -1, 1), reasons };
+}
+
+// Rewards stable or gently building pressure. Penalizes rapid swings.
+function getPressureStabilityScore(pressureMsl, pressureTrend3h) {
+  const reasons = [];
+  let score = 0;
+
+  if (pressureMsl !== null && pressureMsl !== undefined) {
+    if (pressureMsl >= 1010 && pressureMsl <= 1022) {
+      score += 0.2; // comfortable high-pressure zone
+    } else if (pressureMsl < 1000 || pressureMsl > 1026) {
+      score -= 0.2;
+      reasons.push("Barometric pressure is on the more extreme end.");
     }
   }
 
   if (pressureTrend3h !== null && pressureTrend3h !== undefined) {
-    if (pressureTrend3h <= -1.5) {
-      score += 1;
-      reasons.push("Falling pressure can improve short feeding windows.");
-    } else if (pressureTrend3h >= 2.5) {
-      score -= 1;
-      reasons.push("Rapidly rising pressure can make fish less active.");
-    } else if (pressureTrend3h > -0.75 && pressureTrend3h < 0.75) {
-      score += 0.5;
-      reasons.push("Stable pressure supports predictable behavior.");
+    if (pressureTrend3h > -0.75 && pressureTrend3h < 0.75) {
+      score += 0.8;
+      reasons.push("Stable pressure — consistent, predictable feeding behavior.");
+    } else if (pressureTrend3h >= 0.75 && pressureTrend3h <= 2.0) {
+      score += 0.3;
+      reasons.push("Slowly rising pressure — generally a positive sign.");
+    } else if (pressureTrend3h < -0.75 && pressureTrend3h >= -2.0) {
+      score += 0.1;
+      reasons.push("Gradual pressure drop — may briefly trigger feeding before a front.");
+    } else if (pressureTrend3h < -2.0) {
+      score -= 0.8;
+      reasons.push("Rapid pressure drop — fish may go off the bite as a front approaches.");
+    } else if (pressureTrend3h > 2.0) {
+      score -= 0.6;
+      reasons.push("Rapidly rising pressure — fish often less active right after a front.");
     }
   }
 
-  const phaseResult = getPhaseBoost(data.moonData?.phaseName, data.moonData?.illumination);
-  score += phaseResult.boost;
-  reasons.push(...phaseResult.reasons);
+  return { score: clamp(score, -1, 1), reasons };
+}
 
+// Cloud cover and light conditions.
+function getCloudCoverScore(cloudCover, shortwaveRadiation, isDay, hour, month) {
+  const season = getSeason(month);
+  const reasons = [];
+  let score = 0;
+
+  if (cloudCover >= 25 && cloudCover <= 65) {
+    score = 0.8;
+    reasons.push("Partly cloudy skies reduce glare and extend feeding windows.");
+  } else if (cloudCover > 65 && cloudCover <= 85) {
+    score = 0.3;
+    reasons.push("Mostly cloudy — low-glare conditions can be productive.");
+  } else if (cloudCover > 85) {
+    score = -0.2;
+    reasons.push("Heavy overcast without other positives may slow activity.");
+  } else {
+    // Clear sky — evaluate by time and season
+    if (isDay === 1 && hour >= 10 && hour <= 15 && season === "summer" && shortwaveRadiation >= 600) {
+      score = -0.8;
+      reasons.push("Bright midday summer sun pushes bluegill tight to cover.");
+    } else if (isDay === 1 && hour >= 10 && hour <= 15 && shortwaveRadiation >= 450) {
+      score = -0.25;
+      reasons.push("Clear midday sky reduces surface feeding comfort.");
+    } else {
+      score = 0.1; // clear sky at dawn/dusk or low radiation is fine
+    }
+  }
+
+  return { score: clamp(score, -1, 1), reasons };
+}
+
+// Wind score — a light breeze helps; strong wind hurts smaller water more.
+function getWindScore(windSpeed, spotType) {
+  const reasons = [];
+  let score = 0;
+
+  if (windSpeed >= 3 && windSpeed <= 9) {
+    score = 1.0;
+    reasons.push("Light breeze ripples the surface and improves feeding conditions.");
+  } else if (windSpeed > 9 && windSpeed <= 14) {
+    score = 0.2;
+    reasons.push("Moderate wind — still fishable.");
+  } else if (windSpeed > 14 && windSpeed <= 20) {
+    score = -0.5;
+    reasons.push("Breezy conditions can reduce bite predictability.");
+  } else if (windSpeed > 20) {
+    score = -1.0;
+    reasons.push("Strong wind makes consistent bites difficult.");
+  } else {
+    score = 0.1; // calm — neutral
+  }
+
+  // Ponds and lake coves are more exposed to wind effects than larger open water
+  const type = normalizeSpotType(spotType || "");
+  if (score < 0 && (type === "Pond" || type === "Lake Cove")) {
+    score = clamp(score * 1.25, -1, 1);
+    if (windSpeed > 14) reasons.push("Wind is especially disruptive on smaller sheltered water.");
+  }
+
+  return { score: clamp(score, -1, 1), reasons };
+}
+
+// Moon and solunar influence — minor nudge only, never the dominant factor.
+// Returns a 0–1 normalized score so weight application keeps it in range.
+function getMoonScore(data) {
+  const phaseResult   = getPhaseBoost(data.moonData?.phaseName, data.moonData?.illumination);
   const solunarResult = getSolunarBoost(data);
-  score += solunarResult.boost;
-  reasons.push(...solunarResult.reasons);
 
-  score = clamp(Math.round(score), 1, 10);
+  const rawBoost    = phaseResult.boost + solunarResult.boost;
+  const cappedBoost = Math.min(rawBoost, MOON_SCORING.maxTotalBoost);
+  const normalized  = cappedBoost / MOON_SCORING.maxTotalBoost; // 0–1
+
+  return {
+    score: normalized,
+    reasons: [...phaseResult.reasons, ...solunarResult.reasons],
+    moonBoost: cappedBoost,
+    isMajorSolunar: solunarResult.isMajorSolunar,
+    isMinorSolunar: solunarResult.isMinorSolunar,
+    majorType: solunarResult.majorType,
+    minorType: solunarResult.minorType
+  };
+}
+
+// Small per-spot-type habitat nudge. Kept modest — not a dominant factor.
+function getSpotTypeAdjustment(spotType) {
+  const type = normalizeSpotType(spotType || "");
+  const reasons = [];
+  let score = 0;
+
+  if (type === "Pond") {
+    score = 0.2;   // warm quickly, good for panfish
+  } else if (type === "Lake Cove") {
+    score = 0.6;   // structure, shelter, prime bluegill habitat
+  } else if (type === "Creek") {
+    score = 0.0;   // neutral
+  } else if (type === "River") {
+    score = -0.4;  // current and depth work against bluegill feeding patterns
+  } else if (type === "Boat Launch") {
+    score = -0.6;  // boat traffic and noise reduce shallow bite quality
+  }
+
+  if (score >= 0.5) reasons.push(`${type} habitat tends to concentrate bluegill.`);
+  else if (score <= -0.3) reasons.push(`${type} conditions can be tougher for consistent bluegill bites.`);
+
+  return { score: clamp(score, -1, 1), reasons };
+}
+
+// ─── Main BiteScore function ────────────────────────────────────────────────
+// Combines all helper scores using SCORE_WEIGHTS into a final 1–10 BiteScore.
+function calculateBiteScore(data) {
+  const month = new Date(data.time).getMonth() + 1;
+  const hour  = new Date(data.time).getHours();
+
+  const timeResult    = getTimeOfDayScore(hour, data.minutesFromSunrise, data.minutesToSunset, month);
+  const tempResult    = getTemperatureScore(data.temperature, month);
+  const pressResult   = getPressureStabilityScore(data.pressureMsl, data.pressureTrend3h);
+  const cloudResult   = getCloudCoverScore(data.cloudCover, data.shortwaveRadiation, data.isDay, hour, month);
+  const windResult    = getWindScore(data.windSpeed, data.spotType);
+  const moonResult    = getMoonScore(data);
+  const spotResult    = getSpotTypeAdjustment(data.spotType);
+
+  const rawScore =
+    SCORE_BASE +
+    timeResult.score  * SCORE_WEIGHTS.timeOfDay  +
+    pressResult.score * SCORE_WEIGHTS.pressure   +
+    tempResult.score  * SCORE_WEIGHTS.temperature +
+    cloudResult.score * SCORE_WEIGHTS.cloudCover +
+    windResult.score  * SCORE_WEIGHTS.wind       +
+    moonResult.score  * SCORE_WEIGHTS.moon       +
+    spotResult.score  * SCORE_WEIGHTS.spotType;
+
+  const reasons = [
+    ...timeResult.reasons,
+    ...tempResult.reasons,
+    ...pressResult.reasons,
+    ...cloudResult.reasons,
+    ...windResult.reasons,
+    ...moonResult.reasons,
+    ...spotResult.reasons,
+  ];
+
+  const score = clamp(Math.round(rawScore), 1, 10);
 
   let label = "Fair";
   if (score >= 8) label = "Excellent";
@@ -481,15 +674,15 @@ function calculateBiteScore(data) {
     score,
     label,
     reasons,
-    moonBoost: clamp(phaseResult.boost + solunarResult.boost, 0, MOON_SCORING.maxTotalBoost),
-    isMajorSolunar: solunarResult.isMajorSolunar,
-    isMinorSolunar: solunarResult.isMinorSolunar,
-    majorType: solunarResult.majorType,
-    minorType: solunarResult.minorType
+    moonBoost: moonResult.moonBoost,
+    isMajorSolunar: moonResult.isMajorSolunar,
+    isMinorSolunar: moonResult.isMinorSolunar,
+    majorType: moonResult.majorType,
+    minorType: moonResult.minorType
   };
 }
 
-function buildHourlyForecast(hourly, sunrise, sunset, moonData, solunarData, selectedDate) {
+function buildHourlyForecast(hourly, sunrise, sunset, moonData, solunarData, selectedDate, spotType) {
   const hourlyResults = [];
 
   for (let i = 0; i < hourly.time.length; i++) {
@@ -517,7 +710,8 @@ function buildHourlyForecast(hourly, sunrise, sunset, moonData, solunarData, sel
       pressureTrend3h: getPressureTrend(hourly, i, 3),
       precipLast6h: getRollingPrecipitation(hourly, i, 6),
       moonData,
-      solunarData
+      solunarData,
+      spotType
     };
 
     const result = calculateBiteScore(hourData);
@@ -1272,7 +1466,7 @@ async function getForecast() {
     const sunrise = daily.sunrise[dayIndex];
     const sunset = daily.sunset[dayIndex];
     const solunarData = buildSolunarDataForDate(selectedDate, moonData);
-    const hourlyResults = buildHourlyForecast(hourly, sunrise, sunset, moonData, solunarData, selectedDate);
+    const hourlyResults = buildHourlyForecast(hourly, sunrise, sunset, moonData, solunarData, selectedDate, selectedSpot.type);
 
     if (!hourlyResults.length) {
       throw new Error(`No hourly forecast available for ${selectedDate}.`);
@@ -1931,5 +2125,352 @@ try {
     mapEl.innerHTML = '<p class="spot-map-unavailable">Map preview unavailable right now.</p>';
   }
 }
+
+// --- Trip Log ---
+
+const tripLogs = [];
+
+function loadTripLogs() {
+  try {
+    const saved = localStorage.getItem("bluegill_tripLogs");
+    if (!saved) return;
+    const parsed = JSON.parse(saved);
+    if (Array.isArray(parsed)) parsed.forEach(e => tripLogs.push(e));
+  } catch (e) {
+    console.warn("Could not load trip logs:", e);
+  }
+}
+
+function persistTripLogs() {
+  try {
+    localStorage.setItem("bluegill_tripLogs", JSON.stringify(tripLogs));
+  } catch (e) {
+    console.warn("Could not save trip logs:", e);
+  }
+}
+
+let selectedTripResult = null;
+
+function openLogTripModal() {
+  selectedTripResult = null;
+
+  const spot = spots[Number(spotSelect.value)];
+  const date = forecastDate?.value || getTodayDateString();
+  const selectedBar = document.querySelector(".hour-bar.selected");
+  const time = selectedBar?.dataset?.time || "—";
+  const score = selectedBar?.dataset?.score || "—";
+
+  document.getElementById("ltSpotName").textContent = spot?.name || "—";
+  document.getElementById("ltDate").textContent = date
+    ? new Date(`${date}T00:00:00`).toLocaleDateString()
+    : "—";
+  document.getElementById("ltTime").textContent = time;
+  document.getElementById("ltScore").textContent = score;
+  document.getElementById("ltFishCount").value = "";
+  document.getElementById("ltNotes").value = "";
+  document.getElementById("ltError").classList.add("hidden");
+
+  document.querySelectorAll(".result-chip").forEach(c => c.classList.remove("active"));
+
+  // Store raw values on the modal element for use when saving
+  const modal = document.getElementById("logTripModal");
+  modal.dataset.spotId   = spot?.id   || "";
+  modal.dataset.spotName = spot?.name || "";
+  modal.dataset.date     = date;
+  modal.dataset.time     = time;
+  modal.dataset.score    = score;
+
+  modal.classList.remove("hidden");
+  document.body.style.overflow = "hidden";
+}
+
+function closeLogTripModal() {
+  document.getElementById("logTripModal").classList.add("hidden");
+  document.body.style.overflow = "";
+}
+
+function saveLogEntry() {
+  if (!selectedTripResult) {
+    document.getElementById("ltError").classList.remove("hidden");
+    return;
+  }
+
+  const modal = document.getElementById("logTripModal");
+  const fishCountRaw = document.getElementById("ltFishCount").value.trim();
+  const fishCount = fishCountRaw !== "" ? Number(fishCountRaw) : null;
+
+  const entry = {
+    id: "log-" + Date.now(),
+    spotId:          modal.dataset.spotId,
+    spotName:        modal.dataset.spotName,
+    date:            modal.dataset.date,
+    time:            modal.dataset.time,
+    forecastedScore: modal.dataset.score !== "—" ? Number(modal.dataset.score) : null,
+    actualResult:    selectedTripResult,
+    fishCount:       fishCount !== null && !isNaN(fishCount) && fishCount >= 0 ? fishCount : null,
+    notes:           document.getElementById("ltNotes").value.trim(),
+    loggedAt:        new Date().toISOString()
+  };
+
+  tripLogs.unshift(entry); // newest first
+  persistTripLogs();
+  closeLogTripModal();
+
+  // Brief confirmation on the button
+  const btn = document.getElementById("logTripBtn");
+  if (btn) {
+    const original = btn.textContent;
+    btn.textContent = "✓ Saved";
+    btn.disabled = true;
+    setTimeout(() => {
+      btn.textContent = original;
+      btn.disabled = false;
+    }, 2200);
+  }
+}
+
+// Maps each result rating to the CSS color class used in the log list
+const RESULT_COLOR = {
+  Dead: "tough",
+  Slow: "tough",
+  Fair: "fair",
+  Good: "good",
+  Hot:  "good"
+};
+
+function openTripLogModal() {
+  renderTripLogList();
+  document.getElementById("tripLogModal").classList.remove("hidden");
+  document.body.style.overflow = "hidden";
+}
+
+function closeTripLogModal() {
+  document.getElementById("tripLogModal").classList.add("hidden");
+  document.body.style.overflow = "";
+}
+
+function renderTripLogList() {
+  const output = document.getElementById("tripLogListOutput");
+  if (!output) return;
+
+  if (tripLogs.length === 0) {
+    output.innerHTML = `<p class="my-spots-empty">No trips logged yet. Load a forecast, select an hour in the chart, then click "Log Trip Result."</p>`;
+    return;
+  }
+
+  output.innerHTML = tripLogs.map(entry => {
+    const dateStr = entry.date
+      ? new Date(`${entry.date}T00:00:00`).toLocaleDateString()
+      : "—";
+    const scoreText = entry.forecastedScore !== null
+      ? `Forecast score: ${entry.forecastedScore}`
+      : "No forecast score";
+    const fishText = entry.fishCount !== null ? `${entry.fishCount} fish` : "";
+    const notesHtml = entry.notes
+      ? `<div class="trip-log-notes">${escapeHtml(entry.notes)}</div>`
+      : "";
+    const colorClass = RESULT_COLOR[entry.actualResult] || "fair";
+
+    return `
+      <div class="trip-log-entry">
+        <div class="trip-log-main">
+          <div class="trip-log-topline">
+            <span class="trip-log-spot">${escapeHtml(entry.spotName || "—")}</span>
+            <span class="trip-log-meta">${escapeHtml(dateStr)} · ${escapeHtml(entry.time || "—")}</span>
+          </div>
+          <div class="trip-log-subline">
+            <span>${escapeHtml(scoreText)}</span>
+            ${fishText ? `<span>${escapeHtml(fishText)}</span>` : ""}
+          </div>
+          ${notesHtml}
+        </div>
+        <div class="trip-log-right">
+          <span class="trip-log-result ${colorClass}">${escapeHtml(entry.actualResult)}</span>
+          <button class="btn-spot-delete" data-log-id="${escapeHtml(entry.id)}" type="button">Delete</button>
+        </div>
+      </div>
+    `;
+  }).join("");
+
+  output.querySelectorAll("[data-log-id]").forEach(btn => {
+    btn.addEventListener("click", () => deleteTripEntry(btn.dataset.logId));
+  });
+}
+
+function deleteTripEntry(id) {
+  const idx = tripLogs.findIndex(e => e.id === id);
+  if (idx === -1) return;
+  if (!confirm("Delete this trip log entry?")) return;
+  tripLogs.splice(idx, 1);
+  persistTripLogs();
+  renderTripLogList();
+}
+
+loadTripLogs();
+
+// --- Trip Log Insights ---
+
+const RESULT_SCORE = { Dead: 1, Slow: 3, Fair: 5, Good: 7, Hot: 9 };
+const MIN_SPOT_TRIPS = 3; // minimum entries before showing spot-level conclusions
+
+function computeInsights() {
+  const logs = tripLogs;
+  if (logs.length === 0) return null;
+
+  // Total trips
+  const total = logs.length;
+
+  // Average forecasted score (only entries that have one)
+  const withForecast = logs.filter(e => e.forecastedScore !== null && !isNaN(e.forecastedScore));
+  const avgForecast = withForecast.length > 0
+    ? withForecast.reduce((s, e) => s + e.forecastedScore, 0) / withForecast.length
+    : null;
+
+  // Most common actual result
+  const resultCounts = {};
+  logs.forEach(e => {
+    if (e.actualResult) resultCounts[e.actualResult] = (resultCounts[e.actualResult] || 0) + 1;
+  });
+  const mostCommon = Object.entries(resultCounts).sort((a, b) => b[1] - a[1])[0]?.[0] || null;
+
+  // Forecast accuracy: compare forecastedScore (0–10 scale) to result score (1–9 scale)
+  // Normalize forecast to same 1–9 range for comparison
+  const paired = withForecast.filter(e => RESULT_SCORE[e.actualResult] !== undefined);
+  let accuracySummary = null;
+  if (paired.length >= 3) {
+    const diffs = paired.map(e => {
+      const normalizedForecast = (e.forecastedScore / 10) * 8 + 1; // map 0–10 → 1–9
+      return normalizedForecast - RESULT_SCORE[e.actualResult];
+    });
+    const avgDiff = diffs.reduce((s, d) => s + d, 0) / diffs.length;
+    if (avgDiff > 1.2) accuracySummary = "App tends to overpredict";
+    else if (avgDiff < -1.2) accuracySummary = "App tends to underpredict";
+    else accuracySummary = "Forecast is tracking closely";
+  }
+
+  // Per-spot summaries (only spots with MIN_SPOT_TRIPS or more entries)
+  const spotMap = {};
+  logs.forEach(e => {
+    const key = e.spotId || e.spotName || "Unknown";
+    if (!spotMap[key]) spotMap[key] = { name: e.spotName || "Unknown", entries: [] };
+    spotMap[key].entries.push(e);
+  });
+
+  const spotInsights = Object.values(spotMap)
+    .filter(s => s.entries.length >= MIN_SPOT_TRIPS)
+    .map(s => {
+      const count = s.entries.length;
+      const withScore = s.entries.filter(e => e.forecastedScore !== null && !isNaN(e.forecastedScore) && RESULT_SCORE[e.actualResult] !== undefined);
+      let note = null;
+      if (withScore.length >= MIN_SPOT_TRIPS) {
+        const avgDiff = withScore.reduce((sum, e) => {
+          const norm = (e.forecastedScore / 10) * 8 + 1;
+          return sum + (norm - RESULT_SCORE[e.actualResult]);
+        }, 0) / withScore.length;
+        if (avgDiff > 1.5) note = "Tends to fish worse than forecast";
+        else if (avgDiff < -1.5) note = "Tends to fish better than forecast";
+      }
+      const avgActual = s.entries
+        .filter(e => RESULT_SCORE[e.actualResult] !== undefined)
+        .reduce((sum, e, _, arr) => sum + RESULT_SCORE[e.actualResult] / arr.length, 0);
+      return { name: s.name, count, avgActual, note };
+    })
+    .sort((a, b) => b.avgActual - a.avgActual);
+
+  return { total, avgForecast, mostCommon, accuracySummary, spotInsights };
+}
+
+function resultScoreToLabel(score) {
+  if (score >= 8) return "Hot";
+  if (score >= 6.5) return "Good";
+  if (score >= 4) return "Fair";
+  if (score >= 2.5) return "Slow";
+  return "Dead";
+}
+
+function renderInsights() {
+  const output = document.getElementById("insightsOutput");
+  if (!output) return;
+
+  const data = computeInsights();
+
+  if (!data) {
+    output.innerHTML = `
+      <div class="insights-empty">
+        <p class="insights-empty-title">No trips logged yet</p>
+        <p class="insights-empty-body">Load a forecast, select an hour in the BiteTime chart, then tap <strong>Log Trip Result</strong> after your session. Insights will appear here after a few entries.</p>
+      </div>`;
+    return;
+  }
+
+  const forecastRow = data.avgForecast !== null
+    ? `<div class="insight-row"><span class="insight-label">Avg forecasted score</span><span class="insight-value">${data.avgForecast.toFixed(1)} / 10</span></div>`
+    : "";
+
+  const accuracyRow = data.accuracySummary
+    ? `<div class="insight-row insight-row--accent"><span class="insight-label">Forecast accuracy</span><span class="insight-value">${escapeHtml(data.accuracySummary)}</span></div>`
+    : `<div class="insight-note">Log 3 or more trips with forecast scores to see accuracy tracking.</div>`;
+
+  const spotsHtml = data.spotInsights.length > 0
+    ? `<div class="insights-section-header">By spot <span class="insights-section-sub">(${MIN_SPOT_TRIPS}+ trips)</span></div>` +
+      data.spotInsights.map(s => `
+        <div class="insight-spot-card">
+          <div class="insight-spot-name">${escapeHtml(s.name)}</div>
+          <div class="insight-spot-meta">${s.count} trip${s.count !== 1 ? "s" : ""} · Avg result: <strong>${escapeHtml(resultScoreToLabel(s.avgActual))}</strong></div>
+          ${s.note ? `<div class="insight-spot-note">${escapeHtml(s.note)}</div>` : ""}
+        </div>`).join("")
+    : `<div class="insight-note">Spot-level insights appear after logging ${MIN_SPOT_TRIPS}+ trips at the same spot.</div>`;
+
+  output.innerHTML = `
+    <div class="insights-section-header">Overall summary</div>
+    <div class="insight-row"><span class="insight-label">Total logged trips</span><span class="insight-value">${data.total}</span></div>
+    ${forecastRow}
+    <div class="insight-row"><span class="insight-label">Most common result</span><span class="insight-value">${data.mostCommon ? escapeHtml(data.mostCommon) : "—"}</span></div>
+    ${accuracyRow}
+    <div class="insights-section-header" style="margin-top:1.25rem;">Spot insights</div>
+    ${spotsHtml}
+  `;
+}
+
+function openInsightsModal() {
+  renderInsights();
+  document.getElementById("insightsModal").classList.remove("hidden");
+  document.body.style.overflow = "hidden";
+}
+
+function closeInsightsModal() {
+  document.getElementById("insightsModal").classList.add("hidden");
+  document.body.style.overflow = "";
+}
+
+document.getElementById("insightsBtn").addEventListener("click", openInsightsModal);
+document.getElementById("closeInsightsBtn").addEventListener("click", closeInsightsModal);
+document.getElementById("insightsModal").addEventListener("click", function (e) {
+  if (e.target === this) closeInsightsModal();
+});
+
+document.getElementById("logTripBtn").addEventListener("click", openLogTripModal);
+document.getElementById("closeLogTrip").addEventListener("click", closeLogTripModal);
+document.getElementById("cancelLogTrip").addEventListener("click", closeLogTripModal);
+document.getElementById("saveLogTrip").addEventListener("click", saveLogEntry);
+document.getElementById("tripLogBtn").addEventListener("click", openTripLogModal);
+document.getElementById("closeTripLogBtn").addEventListener("click", closeTripLogModal);
+
+document.getElementById("logTripModal").addEventListener("click", function (e) {
+  if (e.target === this) closeLogTripModal();
+});
+
+document.getElementById("tripLogModal").addEventListener("click", function (e) {
+  if (e.target === this) closeTripLogModal();
+});
+
+document.getElementById("resultChips").addEventListener("click", function (e) {
+  const chip = e.target.closest(".result-chip");
+  if (!chip) return;
+  selectedTripResult = chip.dataset.result;
+  document.querySelectorAll(".result-chip").forEach(c => c.classList.remove("active"));
+  chip.classList.add("active");
+  document.getElementById("ltError").classList.add("hidden");
+});
 
 forecastBtn.addEventListener("click", getForecast);

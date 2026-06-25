@@ -1226,3 +1226,285 @@ li {
     width: 100%;
   }
 }
+
+/* --- Trip Log --- */
+
+.log-trip-row {
+  display: flex;
+  margin-top: 14px;
+  padding-top: 14px;
+  border-top: 1px solid var(--border);
+}
+
+.modal-panel--sm {
+  max-width: 480px;
+}
+
+/* Prefilled context block at the top of the Log Trip modal */
+.trip-context {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 10px;
+  padding: 14px;
+  margin-bottom: 18px;
+  background: var(--card-alt);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+}
+
+.trip-context-item {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.trip-context-label {
+  color: var(--muted);
+  font-size: 0.72rem;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
+.trip-context-value {
+  color: var(--text);
+  font-size: 0.95rem;
+  font-weight: 600;
+}
+
+/* Bite result rating chips */
+.result-chips {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.result-chip {
+  flex: 1;
+  min-width: 56px;
+  min-height: 40px;
+  padding: 8px 10px;
+  background: var(--card-alt);
+  color: var(--muted);
+  border: 1.5px solid var(--border);
+  border-radius: 10px;
+  font-size: 0.9rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background var(--transition), color var(--transition), border-color var(--transition);
+}
+
+.result-chip:hover {
+  background: var(--accent-soft);
+  color: var(--accent-dark);
+  border-color: var(--accent);
+  transform: none;
+}
+
+.result-chip.active[data-result="Dead"],
+.result-chip.active[data-result="Slow"] {
+  background: #fbecef;
+  color: var(--tough);
+  border-color: #efc8cf;
+}
+
+.result-chip.active[data-result="Fair"] {
+  background: #fbf4e5;
+  color: var(--fair);
+  border-color: #edd9a8;
+}
+
+.result-chip.active[data-result="Good"],
+.result-chip.active[data-result="Hot"] {
+  background: #e9f6ec;
+  color: var(--good);
+  border-color: #cfe8d5;
+}
+
+/* Trip log entry list */
+.trip-log-entry {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 14px;
+  padding: 14px 0;
+  border-bottom: 1px solid var(--border);
+}
+
+.trip-log-entry:last-child {
+  border-bottom: none;
+}
+
+.trip-log-main {
+  flex: 1;
+  min-width: 0;
+}
+
+.trip-log-topline {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 4px 10px;
+  margin-bottom: 4px;
+}
+
+.trip-log-spot {
+  color: var(--text);
+  font-size: 1rem;
+  font-weight: 600;
+}
+
+.trip-log-meta {
+  color: var(--muted);
+  font-size: 0.85rem;
+}
+
+.trip-log-subline {
+  display: flex;
+  gap: 10px;
+  color: var(--muted);
+  font-size: 0.85rem;
+  margin-bottom: 4px;
+}
+
+.trip-log-notes {
+  margin-top: 4px;
+  color: var(--muted);
+  font-size: 0.82rem;
+  line-height: 1.35;
+}
+
+.trip-log-right {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 8px;
+  flex-shrink: 0;
+}
+
+.trip-log-result {
+  padding: 4px 12px;
+  border-radius: 999px;
+  font-size: 0.85rem;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.trip-log-result.good {
+  background: #e9f6ec;
+  color: var(--good);
+}
+
+.trip-log-result.fair {
+  background: #fbf4e5;
+  color: var(--fair);
+}
+
+.trip-log-result.tough {
+  background: #fbecef;
+  color: var(--tough);
+}
+
+/* --- Trip Log Insights --- */
+
+.insights-empty {
+  padding: 2rem 1rem;
+  text-align: center;
+}
+
+.insights-empty-title {
+  font-size: 1.05rem;
+  font-weight: 600;
+  color: var(--text);
+  margin-bottom: 0.5rem;
+}
+
+.insights-empty-body {
+  font-size: 0.9rem;
+  color: var(--muted);
+  line-height: 1.55;
+  max-width: 320px;
+  margin: 0 auto;
+}
+
+.insights-section-header {
+  font-size: 0.7rem;
+  font-weight: 700;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+  color: var(--muted);
+  padding: 0.6rem 0 0.4rem;
+  border-bottom: 1px solid var(--border);
+  margin-bottom: 0.25rem;
+}
+
+.insights-section-sub {
+  font-weight: 400;
+  text-transform: none;
+  letter-spacing: 0;
+  font-size: 0.75rem;
+}
+
+.insight-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 0.55rem 0;
+  border-bottom: 1px solid var(--border);
+  font-size: 0.9rem;
+}
+
+.insight-row:last-of-type {
+  border-bottom: none;
+}
+
+.insight-row--accent {
+  background: #f0f7ff;
+  border-radius: 6px;
+  padding: 0.55rem 0.6rem;
+  margin-top: 0.25rem;
+  border-bottom: none;
+}
+
+.insight-label {
+  color: var(--muted);
+}
+
+.insight-value {
+  font-weight: 600;
+  color: var(--text);
+}
+
+.insight-note {
+  font-size: 0.85rem;
+  color: var(--muted);
+  padding: 0.6rem 0;
+  font-style: italic;
+}
+
+.insight-spot-card {
+  padding: 0.65rem 0;
+  border-bottom: 1px solid var(--border);
+}
+
+.insight-spot-card:last-child {
+  border-bottom: none;
+}
+
+.insight-spot-name {
+  font-weight: 600;
+  font-size: 0.9rem;
+  color: var(--text);
+  margin-bottom: 0.2rem;
+}
+
+.insight-spot-meta {
+  font-size: 0.85rem;
+  color: var(--muted);
+}
+
+.insight-spot-note {
+  font-size: 0.8rem;
+  color: var(--accent);
+  margin-top: 0.25rem;
+  font-style: italic;
+}
