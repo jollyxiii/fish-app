@@ -906,6 +906,76 @@ li {
   }
 }
 
+/* --- Species score grid (two-species summary) --- */
+
+.species-score-grid {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 36px;
+  margin-bottom: 14px;
+}
+
+.species-score-card {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+}
+
+.species-score-name {
+  color: var(--muted);
+  font-size: 0.75rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.07em;
+}
+
+.species-score-divider {
+  width: 1px;
+  height: 80px;
+  background: var(--border);
+  flex-shrink: 0;
+}
+
+/* --- Species toggle (above hourly chart) --- */
+
+.species-toggle {
+  display: inline-flex;
+  margin-bottom: 14px;
+  border: 1.5px solid var(--border);
+  border-radius: 10px;
+  overflow: hidden;
+}
+
+.species-toggle-btn {
+  flex: 1;
+  min-height: 34px;
+  padding: 5px 20px;
+  background: transparent;
+  color: var(--muted);
+  border: none;
+  border-radius: 0;
+  font-size: 0.88rem;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.species-toggle-btn + .species-toggle-btn {
+  border-left: 1.5px solid var(--border);
+}
+
+.species-toggle-btn.active {
+  background: var(--accent);
+  color: #ffffff;
+}
+
+.species-toggle-btn:hover:not(.active) {
+  background: var(--card-alt);
+  color: var(--text);
+  transform: none;
+}
+
 /* --- Unified forecast card --- */
 
 .forecast-score-band {
@@ -1157,6 +1227,7 @@ li {
   line-height: 1.35;
   display: -webkit-box;
   -webkit-line-clamp: 2;
+  line-clamp: 2;
   -webkit-box-orient: vertical;
   overflow: hidden;
 }

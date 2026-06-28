@@ -48,8 +48,19 @@
 
     <section class="card forecast-card">
       <div class="forecast-score-band">
-        <div id="scoreOutput" class="score">--</div>
-        <div id="scoreLabel" class="score-label">--</div>
+        <div class="species-score-grid">
+          <div class="species-score-card">
+            <div class="species-score-name">Bluegill</div>
+            <div id="scoreOutput" class="score">--</div>
+            <div id="scoreLabel" class="score-label">--</div>
+          </div>
+          <div class="species-score-divider" aria-hidden="true"></div>
+          <div class="species-score-card">
+            <div class="species-score-name">Bass</div>
+            <div id="bassScoreOutput" class="score">--</div>
+            <div id="bassScoreLabel" class="score-label">--</div>
+          </div>
+        </div>
         <p id="scoreHelp" class="score-help neutral-state">Pick a spot and load the forecast.</p>
       </div>
       <div id="weatherOutput" class="forecast-details">
@@ -66,6 +77,10 @@
 
     <section class="card">
       <h2>BiteTime Forecast</h2>
+      <div class="species-toggle" id="speciesToggle" role="group" aria-label="Species">
+        <button class="species-toggle-btn active" data-species="bluegill" type="button">Bluegill</button>
+        <button class="species-toggle-btn" data-species="bass" type="button">Bass</button>
+      </div>
       <div id="hourlyOutput" class="hourly-output">
         <p>No hourly forecast loaded yet.</p>
       </div>
@@ -163,6 +178,10 @@
           <div class="trip-context-item">
             <span class="trip-context-label">Forecasted Score</span>
             <span id="ltScore" class="trip-context-value">—</span>
+          </div>
+          <div class="trip-context-item">
+            <span class="trip-context-label">Species</span>
+            <span id="ltSpecies" class="trip-context-value">—</span>
           </div>
         </div>
         <div class="add-spot-form">

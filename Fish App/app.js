@@ -5,10 +5,19 @@ const weatherOutput = document.getElementById("weatherOutput");
 const scoreOutput = document.getElementById("scoreOutput");
 const scoreLabel = document.getElementById("scoreLabel");
 const scoreHelp = document.getElementById("scoreHelp");
+const bassScoreOutput = document.getElementById("bassScoreOutput");
+const bassScoreLabel = document.getElementById("bassScoreLabel");
 const reasonOutput = document.getElementById("reasonOutput");
 const hourlyOutput = document.getElementById("hourlyOutput");
 const chartTooltip = document.getElementById("chartTooltip");
 const selectedHourDetails = document.getElementById("selectedHourDetails");
+
+// Active species for the hourly chart toggle. "bluegill" or "bass".
+let activeSpecies = "bluegill";
+
+// Stored after each successful forecast so the species toggle can re-render without re-fetching.
+let lastHourlyResults = null;
+let lastSelectedDate = null;
 
 const MAX_FORECAST_DAYS = 16;
 
@@ -67,6 +76,29 @@ const TEMP_CONFIG = {
   peakHigh:   82,   // top of ideal range
   coldCutoff: 50,   // below this: very sluggish
   heatCutoff: 93,   // above this: heat stress, slow bite
+};
+
+// ─── Largemouth Bass scoring constants ────────────────────────────────────────
+// Bass are more crepuscular and structure-oriented than bluegill.
+// They tolerate a wider temperature range but shut down harder in summer midday heat.
+
+const BASS_SCORE_BASE = 4;
+
+const BASS_SCORE_WEIGHTS = {
+  timeOfDay:   1.8,  // dawn/dusk ambush windows are critical for bass
+  pressure:    1.4,  // bass respond strongly to pressure — pre-front sprees are real
+  temperature: 1.2,  // season-aware; wider comfort range than bluegill
+  cloudCover:  0.7,  // overcast helps, but bass tolerate bright sun better with cover
+  wind:        0.6,  // less wind-sensitive than bluegill; structure absorbs disturbance
+  moon:        0.5,  // minor influence
+  spotType:    0.5,  // lake coves and creeks offer prime bass structure
+};
+
+const BASS_TEMP_CONFIG = {
+  peakLow:    68,   // bottom of ideal bass range
+  peakHigh:   84,   // top of ideal range
+  coldCutoff: 50,   // below this: bass metabolism very slow
+  heatCutoff: 96,   // above this: bass holding very deep
 };
 
 // Moon / solunar — kept intentionally modest so it never dominates the score
@@ -629,9 +661,9 @@ function getSpotTypeAdjustment(spotType) {
   return { score: clamp(score, -1, 1), reasons };
 }
 
-// ─── Main BiteScore function ────────────────────────────────────────────────
+// ─── Bluegill BiteScore function ────────────────────────────────────────────
 // Combines all helper scores using SCORE_WEIGHTS into a final 1–10 BiteScore.
-function calculateBiteScore(data) {
+function calculateBluegillBiteScore(data) {
   const month = new Date(data.time).getMonth() + 1;
   const hour  = new Date(data.time).getHours();
 
@@ -652,6 +684,183 @@ function calculateBiteScore(data) {
     windResult.score  * SCORE_WEIGHTS.wind       +
     moonResult.score  * SCORE_WEIGHTS.moon       +
     spotResult.score  * SCORE_WEIGHTS.spotType;
+
+  const reasons = [
+    ...timeResult.reasons,
+    ...tempResult.reasons,
+    ...pressResult.reasons,
+    ...cloudResult.reasons,
+    ...windResult.reasons,
+    ...moonResult.reasons,
+    ...spotResult.reasons,
+  ];
+
+  const score = clamp(Math.round(rawScore), 1, 10);
+
+  let label = "Fair";
+  if (score >= 8) label = "Excellent";
+  else if (score >= 6) label = "Good";
+  else if (score <= 3) label = "Tough";
+
+  return {
+    score,
+    label,
+    reasons,
+    moonBoost: moonResult.moonBoost,
+    isMajorSolunar: moonResult.isMajorSolunar,
+    isMinorSolunar: moonResult.isMinorSolunar,
+    majorType: moonResult.majorType,
+    minorType: moonResult.minorType
+  };
+}
+
+// ─── Largemouth Bass scoring helpers ─────────────────────────────────────────
+
+// Bass are ambush predators tied to dawn and dusk. Summer midday shuts them down
+// harder than bluegill. Bass stay active a bit past sunrise and briefly after sunset.
+function getBassTimeOfDayScore(hour, minutesFromSunrise, minutesToSunset, month) {
+  const season = getSeason(month);
+  const nearSunrise = Math.abs(minutesFromSunrise) <= 90;
+  const nearSunset  = Math.abs(minutesToSunset)   <= 90;
+  const reasons = [];
+  let score = 0;
+
+  if (nearSunrise) {
+    score += 0.9;
+    reasons.push("Low-light dawn window — bass are actively feeding.");
+  }
+
+  if (nearSunset) {
+    score += 0.9;
+    reasons.push("Dusk feeding window — prime time for bass activity.");
+  }
+
+  // Bass often stay active for 1–2 hours after sunrise before the sun gets high
+  if (!nearSunrise && minutesFromSunrise > 90 && minutesFromSunrise <= 180) {
+    score += 0.3;
+    reasons.push("Early post-sunrise window — bass still hunting before sun gets high.");
+  }
+
+  // Brief feeding burst just after sunset as light fades
+  if (!nearSunset && minutesToSunset < 0 && Math.abs(minutesToSunset) <= 60) {
+    score += 0.2;
+    reasons.push("Just after sunset — bass may continue feeding in fading light.");
+  }
+
+  if (hour >= 10 && hour <= 15) {
+    if (season === "summer") {
+      score -= 0.9;
+      reasons.push("Midday summer heat — bass move deep and largely shut down.");
+    } else if (season === "winter") {
+      score += 0.5;
+      reasons.push("Winter midday warmth brings bass into reachable feeding zones.");
+    }
+    // Spring and fall midday: neutral
+  }
+
+  // Late night: bass can still bite in darkness but less predictable for casual fishing
+  if (hour >= 23 || hour <= 3) {
+    score -= 0.2;
+    reasons.push("Late night hours — bass may be active but less predictable.");
+  }
+
+  return { score: clamp(score, -1, 1), reasons };
+}
+
+// Bass thrive in 68–84°F. Spring warm-up and fall cool-down are prime feeding periods.
+function getBassTemperatureScore(temp, month) {
+  const season = getSeason(month);
+  const reasons = [];
+  let score = 0;
+
+  if (temp >= BASS_TEMP_CONFIG.peakLow && temp <= BASS_TEMP_CONFIG.peakHigh) {
+    score = 1.0;
+    reasons.push("Air temperature is in the ideal bass activity range.");
+  } else if (temp > BASS_TEMP_CONFIG.peakHigh && temp <= BASS_TEMP_CONFIG.heatCutoff) {
+    const excess = temp - BASS_TEMP_CONFIG.peakHigh;
+    const range  = BASS_TEMP_CONFIG.heatCutoff - BASS_TEMP_CONFIG.peakHigh;
+    score = 1.0 - (excess / range);
+    if (score < 0.3) {
+      reasons.push("Hot conditions — bass likely holding deep in cooler water.");
+    } else {
+      reasons.push("Warm but manageable — bass still active, likely in shaded or deeper water.");
+    }
+  } else if (temp > BASS_TEMP_CONFIG.heatCutoff) {
+    score = -1.0;
+    reasons.push("Extreme heat — bass very likely suspended deep or completely shut down.");
+  } else if (temp < BASS_TEMP_CONFIG.coldCutoff) {
+    score = -1.0;
+    reasons.push("Cold air — bass metabolism is slow and they are largely inactive.");
+  } else {
+    // Cool range: 50–68°F
+    const ratio = (temp - BASS_TEMP_CONFIG.coldCutoff) / (BASS_TEMP_CONFIG.peakLow - BASS_TEMP_CONFIG.coldCutoff);
+    score = ratio * 0.8 - 0.3;
+    if (season === "spring" && temp >= 58) {
+      score += 0.35;
+      reasons.push("Spring warm-up — bass moving shallow and becoming more aggressive.");
+    } else if (season === "fall" && temp >= 55) {
+      score += 0.25;
+      reasons.push("Fall cooling — bass feeding heavily before winter; a great window.");
+    } else if (season === "winter" && temp >= 56) {
+      score += 0.2;
+      reasons.push("Warmer winter day — afternoon bass bite is possible in shallow water.");
+    } else {
+      reasons.push("Cool temperatures may slow bass activity.");
+    }
+  }
+
+  return { score: clamp(score, -1, 1), reasons };
+}
+
+// Bass favor structured, sheltered water. Lake coves and creek edges are ideal.
+function getBassSpotTypeAdjustment(spotType) {
+  const type = normalizeSpotType(spotType || "");
+  const reasons = [];
+  let score = 0;
+
+  if (type === "Pond") {
+    score = 0.3;   // bass can dominate ponds; good for ambush
+  } else if (type === "Lake Cove") {
+    score = 0.8;   // structure, shelter, fallen timber — prime bass territory
+  } else if (type === "Creek") {
+    score = 0.4;   // bass love current breaks and creek edges
+  } else if (type === "River") {
+    score = 0.1;   // bass adapt to rivers better than bluegill; neutral-to-slight positive
+  } else if (type === "Boat Launch") {
+    score = -0.5;  // boat traffic and disturbance push bass off
+  }
+
+  if (score >= 0.6) reasons.push(`${type} offers prime bass structure and ambush cover.`);
+  else if (score >= 0.3) reasons.push(`${type} can hold good bass populations.`);
+  else if (score <= -0.3) reasons.push(`${type} conditions can be disruptive for consistent bass bites.`);
+
+  return { score: clamp(score, -1, 1), reasons };
+}
+
+// ─── Largemouth Bass BiteScore function ──────────────────────────────────────
+// Uses bass-specific time-of-day, temperature, and spot-type helpers.
+// Shares pressure, cloud, wind, and moon helpers with the bluegill model.
+function calculateBassBiteScore(data) {
+  const month = new Date(data.time).getMonth() + 1;
+  const hour  = new Date(data.time).getHours();
+
+  const timeResult  = getBassTimeOfDayScore(hour, data.minutesFromSunrise, data.minutesToSunset, month);
+  const tempResult  = getBassTemperatureScore(data.temperature, month);
+  const pressResult = getPressureStabilityScore(data.pressureMsl, data.pressureTrend3h);
+  const cloudResult = getCloudCoverScore(data.cloudCover, data.shortwaveRadiation, data.isDay, hour, month);
+  const windResult  = getWindScore(data.windSpeed, data.spotType);
+  const moonResult  = getMoonScore(data);
+  const spotResult  = getBassSpotTypeAdjustment(data.spotType);
+
+  const rawScore =
+    BASS_SCORE_BASE +
+    timeResult.score  * BASS_SCORE_WEIGHTS.timeOfDay  +
+    pressResult.score * BASS_SCORE_WEIGHTS.pressure   +
+    tempResult.score  * BASS_SCORE_WEIGHTS.temperature +
+    cloudResult.score * BASS_SCORE_WEIGHTS.cloudCover +
+    windResult.score  * BASS_SCORE_WEIGHTS.wind       +
+    moonResult.score  * BASS_SCORE_WEIGHTS.moon       +
+    spotResult.score  * BASS_SCORE_WEIGHTS.spotType;
 
   const reasons = [
     ...timeResult.reasons,
@@ -714,7 +923,8 @@ function buildHourlyForecast(hourly, sunrise, sunset, moonData, solunarData, sel
       spotType
     };
 
-    const result = calculateBiteScore(hourData);
+    const bgResult   = calculateBluegillBiteScore(hourData);
+    const bassResult = calculateBassBiteScore(hourData);
 
     hourlyResults.push({
       time: timeString,
@@ -732,19 +942,31 @@ function buildHourlyForecast(hourly, sunrise, sunset, moonData, solunarData, sel
       isDay: hourData.isDay,
       pressureTrend3h: hourData.pressureTrend3h,
       precipLast6h: hourData.precipLast6h,
-      score: result.score,
-      label: result.label,
-      reasons: result.reasons,
-      moonBoost: result.moonBoost,
-      isMajorSolunar: result.isMajorSolunar,
-      isMinorSolunar: result.isMinorSolunar,
-      majorType: result.majorType,
-      minorType: result.minorType,
       moonPhase: moonData?.phaseName || "Unknown",
       moonIllumination: moonData?.illumination,
       moonrise: moonData?.moonrise,
       moonset: moonData?.moonset,
-      moonTransit: moonData?.transit
+      moonTransit: moonData?.transit,
+      bluegill: {
+        score: bgResult.score,
+        label: bgResult.label,
+        reasons: bgResult.reasons,
+        moonBoost: bgResult.moonBoost,
+        isMajorSolunar: bgResult.isMajorSolunar,
+        isMinorSolunar: bgResult.isMinorSolunar,
+        majorType: bgResult.majorType,
+        minorType: bgResult.minorType
+      },
+      bass: {
+        score: bassResult.score,
+        label: bassResult.label,
+        reasons: bassResult.reasons,
+        moonBoost: bassResult.moonBoost,
+        isMajorSolunar: bassResult.isMajorSolunar,
+        isMinorSolunar: bassResult.isMinorSolunar,
+        majorType: bassResult.majorType,
+        minorType: bassResult.minorType
+      }
     });
   }
 
@@ -1058,20 +1280,21 @@ function renderHourlyForecast(hourlyResults, selectedDate) {
   }
 
   const strongHours = [...hourlyResults]
-    .filter(hour => hour.score >= 8)
+    .filter(hour => (hour[activeSpecies]?.score ?? 0) >= 8)
     .sort((a, b) => a.time.localeCompare(b.time));
 
   const groupedWindows = [];
 
   for (const hour of strongHours) {
     const lastWindow = groupedWindows[groupedWindows.length - 1];
+    const sp = hour[activeSpecies];
 
     if (!lastWindow) {
       groupedWindows.push({
         start: hour,
         end: hour,
-        bestScore: hour.score,
-        bestLabel: hour.label
+        bestScore: sp.score,
+        bestLabel: sp.label
       });
       continue;
     }
@@ -1082,49 +1305,53 @@ function renderHourlyForecast(hourlyResults, selectedDate) {
 
     if (diffInHours <= 1.01) {
       lastWindow.end = hour;
-      if (hour.score > lastWindow.bestScore) {
-        lastWindow.bestScore = hour.score;
-        lastWindow.bestLabel = hour.label;
+      if (sp.score > lastWindow.bestScore) {
+        lastWindow.bestScore = sp.score;
+        lastWindow.bestLabel = sp.label;
       }
     } else {
       groupedWindows.push({
         start: hour,
         end: hour,
-        bestScore: hour.score,
-        bestLabel: hour.label
+        bestScore: sp.score,
+        bestLabel: sp.label
       });
     }
   }
 
   const fallbackWindows = [...hourlyResults]
-    .sort((a, b) => b.score - a.score)
+    .sort((a, b) => b[activeSpecies].score - a[activeSpecies].score)
     .slice(0, 3)
     .map(hour => ({
       start: hour,
       end: hour,
-      bestScore: hour.score,
-      bestLabel: hour.label
+      bestScore: hour[activeSpecies].score,
+      bestLabel: hour[activeSpecies].label
     }));
 
   const windowsToShow = groupedWindows.length ? groupedWindows.slice(0, 3) : fallbackWindows;
 
-  const dayHeading = isTodaySelected(selectedDate) ? "Best times to fish today" : `Best times to fish on ${selectedDate}`;
+  const speciesName = activeSpecies === "bass" ? "Bass" : "Bluegill";
+  const dayHeading = isTodaySelected(selectedDate)
+    ? `Best ${speciesName} times today`
+    : `Best ${speciesName} times on ${selectedDate}`;
 
   const topHtml = `
     <div class="top-windows">
       <h3>${dayHeading}</h3>
       <ul class="top-windows-list">
         ${windowsToShow.map(window => {
+          const sp = window.start[activeSpecies];
           const sameTime = window.start.formattedTime === window.end.formattedTime;
           const timeText = sameTime
             ? window.start.formattedTime
             : `${window.start.formattedTime}–${window.end.formattedTime}`;
 
           const solunarText =
-            window.start.isMajorSolunar
-              ? ` · ${window.start.majorType}`
-              : window.start.isMinorSolunar
-              ? ` · ${window.start.minorType}`
+            sp?.isMajorSolunar
+              ? ` · ${sp.majorType}`
+              : sp?.isMinorSolunar
+              ? ` · ${sp.minorType}`
               : "";
 
           const noteText = sameTime
@@ -1158,22 +1385,23 @@ function renderHourlyForecast(hourlyResults, selectedDate) {
       </div>
       <div class="hourly-chart" id="hourlyChart">
         ${hourlyResults.map(hour => {
-          const solunarLabel = hour.isMajorSolunar
-            ? hour.majorType
-            : hour.isMinorSolunar
-            ? hour.minorType
+          const sp = hour[activeSpecies];
+          const solunarLabel = sp.isMajorSolunar
+            ? sp.majorType
+            : sp.isMinorSolunar
+            ? sp.minorType
             : "None";
 
           return `
             <div class="hour-bar-wrap">
-              <div class="hour-score">${hour.score}</div>
+              <div class="hour-score">${sp.score}</div>
               <div
-                class="hour-bar ${getBarClass(hour.label)} ${hour.isMajorSolunar ? "solunar-major" : ""} ${hour.isMinorSolunar ? "solunar-minor" : ""}"
-                style="height: ${Math.max(hour.score * 18, 18)}px"
+                class="hour-bar ${getBarClass(sp.label)} ${sp.isMajorSolunar ? "solunar-major" : ""} ${sp.isMinorSolunar ? "solunar-minor" : ""}"
+                style="height: ${Math.max(sp.score * 18, 18)}px"
                 data-time="${hour.formattedTime}"
                 data-hour="${new Date(hour.time).getHours()}"
-                data-score="${hour.score}"
-                data-label="${hour.label}"
+                data-score="${sp.score}"
+                data-label="${sp.label}"
                 data-temp="${hour.temperature}"
                 data-apparent-temp="${hour.apparentTemperature}"
                 data-cloud="${hour.cloudCover}"
@@ -1184,10 +1412,10 @@ function renderHourlyForecast(hourlyResults, selectedDate) {
                 data-pressure-trend="${roundValue(hour.pressureTrend3h, 1)}"
                 data-moon-phase="${hour.moonPhase}"
                 data-moon-illumination="${roundValue(hour.moonIllumination, 0)}"
-                data-moon-boost="${roundValue(hour.moonBoost, 2)}"
+                data-moon-boost="${roundValue(sp.moonBoost, 2)}"
                 data-solunar="${solunarLabel}"
-                data-reasons="${hour.reasons.join(" | ")}"
-                aria-label="${hour.formattedTime}, bite score ${hour.score}, ${hour.label}"
+                data-reasons="${sp.reasons.join(" | ")}"
+                aria-label="${hour.formattedTime}, bite score ${sp.score}, ${sp.label}"
                 tabindex="0"
               ></div>
               <div class="hour-label">${hour.formattedTime.replace(":00", "")}</div>
@@ -1260,6 +1488,18 @@ function updateScoreLabelStyle(label) {
     scoreLabel.classList.add("fair");
   } else {
     scoreLabel.classList.add("tough");
+  }
+}
+
+function updateBassScoreLabelStyle(label) {
+  if (!bassScoreLabel) return;
+  bassScoreLabel.classList.remove("good", "fair", "tough");
+  if (label === "Excellent" || label === "Good") {
+    bassScoreLabel.classList.add("good");
+  } else if (label === "Fair") {
+    bassScoreLabel.classList.add("fair");
+  } else {
+    bassScoreLabel.classList.add("tough");
   }
 }
 
@@ -1379,6 +1619,8 @@ async function getForecast() {
   scoreOutput.textContent = "--";
   scoreLabel.textContent = "Calculating...";
   scoreLabel.classList.remove("good", "fair", "tough");
+  if (bassScoreOutput) bassScoreOutput.textContent = "--";
+  if (bassScoreLabel) { bassScoreLabel.textContent = "--"; bassScoreLabel.classList.remove("good", "fair", "tough"); }
   scoreHelp.textContent = "Checking forecast conditions...";
   scoreHelp.classList.remove("good-state", "fair-state", "tough-state", "neutral-state");
   scoreHelp.classList.add("neutral-state");
@@ -1392,6 +1634,8 @@ async function getForecast() {
     scoreOutput.textContent = "--";
     scoreLabel.textContent = "Error";
     scoreLabel.classList.remove("good", "fair", "tough");
+    if (bassScoreOutput) bassScoreOutput.textContent = "--";
+    if (bassScoreLabel) { bassScoreLabel.textContent = "—"; bassScoreLabel.classList.remove("good", "fair", "tough"); }
     scoreHelp.textContent = "Please choose a valid fishing spot.";
     scoreHelp.classList.remove("good-state", "fair-state", "tough-state", "neutral-state");
     scoreHelp.classList.add("neutral-state");
@@ -1416,6 +1660,8 @@ async function getForecast() {
     scoreOutput.textContent = "--";
     scoreLabel.textContent = "Error";
     scoreLabel.classList.remove("good", "fair", "tough");
+    if (bassScoreOutput) bassScoreOutput.textContent = "--";
+    if (bassScoreLabel) { bassScoreLabel.textContent = "—"; bassScoreLabel.classList.remove("good", "fair", "tough"); }
     scoreHelp.textContent = "Check your spots.js file for missing coordinates.";
     scoreHelp.classList.remove("good-state", "fair-state", "tough-state", "neutral-state");
     scoreHelp.classList.add("neutral-state");
@@ -1484,13 +1730,19 @@ async function getForecast() {
         }
       }
     } else {
-      summaryHour = [...hourlyResults].sort((a, b) => b.score - a.score || a.time.localeCompare(b.time))[0];
+      // Sort by bluegill score to pick the reference hour; weather data is species-neutral
+      summaryHour = [...hourlyResults].sort((a, b) => b.bluegill.score - a.bluegill.score || a.time.localeCompare(b.time))[0];
     }
 
     const summaryResult = {
-      score: summaryHour.score,
-      label: summaryHour.label,
-      reasons: summaryHour.reasons
+      score: summaryHour.bluegill.score,
+      label: summaryHour.bluegill.label,
+      reasons: summaryHour.bluegill.reasons
+    };
+
+    const bassSummaryResult = {
+      score: summaryHour.bass.score,
+      label: summaryHour.bass.label
     };
 
     weatherOutput.innerHTML = `
@@ -1545,12 +1797,18 @@ async function getForecast() {
     updateScoreLabelStyle(summaryResult.label);
     updateScoreHelp(summaryResult.score, summaryResult.label, selectedDate);
 
+    if (bassScoreOutput) bassScoreOutput.textContent = bassSummaryResult.score;
+    if (bassScoreLabel) bassScoreLabel.textContent = bassSummaryResult.label;
+    updateBassScoreLabelStyle(bassSummaryResult.label);
+
     reasonOutput.innerHTML = `
       <ul>
         ${summaryResult.reasons.map(reason => `<li>${escapeHtml(reason)}</li>`).join("")}
       </ul>
     `;
 
+    lastHourlyResults = hourlyResults;
+    lastSelectedDate = selectedDate;
     renderHourlyForecast(hourlyResults, selectedDate);
   } catch (error) {
     hideChartTooltip();
@@ -1558,6 +1816,8 @@ async function getForecast() {
     scoreOutput.textContent = "--";
     scoreLabel.textContent = "Error";
     scoreLabel.classList.remove("good", "fair", "tough");
+    if (bassScoreOutput) bassScoreOutput.textContent = "--";
+    if (bassScoreLabel) { bassScoreLabel.textContent = "—"; bassScoreLabel.classList.remove("good", "fair", "tough"); }
     scoreHelp.textContent = "Could not load forecast data right now.";
     scoreHelp.classList.remove("good-state", "fair-state", "tough-state", "neutral-state");
     scoreHelp.classList.add("neutral-state");
@@ -2166,6 +2426,8 @@ function openLogTripModal() {
     : "—";
   document.getElementById("ltTime").textContent = time;
   document.getElementById("ltScore").textContent = score;
+  const ltSpeciesEl = document.getElementById("ltSpecies");
+  if (ltSpeciesEl) ltSpeciesEl.textContent = activeSpecies === "bass" ? "Bass" : "Bluegill";
   document.getElementById("ltFishCount").value = "";
   document.getElementById("ltNotes").value = "";
   document.getElementById("ltError").classList.add("hidden");
@@ -2179,6 +2441,7 @@ function openLogTripModal() {
   modal.dataset.date     = date;
   modal.dataset.time     = time;
   modal.dataset.score    = score;
+  modal.dataset.species  = activeSpecies;
 
   modal.classList.remove("hidden");
   document.body.style.overflow = "hidden";
@@ -2205,6 +2468,7 @@ function saveLogEntry() {
     spotName:        modal.dataset.spotName,
     date:            modal.dataset.date,
     time:            modal.dataset.time,
+    species:         modal.dataset.species || "bluegill",
     forecastedScore: modal.dataset.score !== "—" ? Number(modal.dataset.score) : null,
     actualResult:    selectedTripResult,
     fishCount:       fishCount !== null && !isNaN(fishCount) && fishCount >= 0 ? fishCount : null,
@@ -2262,9 +2526,10 @@ function renderTripLogList() {
     const dateStr = entry.date
       ? new Date(`${entry.date}T00:00:00`).toLocaleDateString()
       : "—";
+    const speciesText = entry.species === "bass" ? "Bass" : "Bluegill";
     const scoreText = entry.forecastedScore !== null
-      ? `Forecast score: ${entry.forecastedScore}`
-      : "No forecast score";
+      ? `${speciesText} forecast: ${entry.forecastedScore}`
+      : `${speciesText} · No forecast score`;
     const fishText = entry.fishCount !== null ? `${entry.fishCount} fish` : "";
     const notesHtml = entry.notes
       ? `<div class="trip-log-notes">${escapeHtml(entry.notes)}</div>`
@@ -2471,6 +2736,18 @@ document.getElementById("resultChips").addEventListener("click", function (e) {
   document.querySelectorAll(".result-chip").forEach(c => c.classList.remove("active"));
   chip.classList.add("active");
   document.getElementById("ltError").classList.add("hidden");
+});
+
+// Species toggle — switches the hourly chart and selected-hour card between species.
+document.getElementById("speciesToggle").addEventListener("click", function (e) {
+  const btn = e.target.closest(".species-toggle-btn");
+  if (!btn) return;
+  activeSpecies = btn.dataset.species;
+  document.querySelectorAll(".species-toggle-btn").forEach(b => b.classList.toggle("active", b === btn));
+  if (lastHourlyResults && lastSelectedDate) {
+    hideChartTooltip();
+    renderHourlyForecast(lastHourlyResults, lastSelectedDate);
+  }
 });
 
 forecastBtn.addEventListener("click", getForecast);
