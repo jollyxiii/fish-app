@@ -1025,6 +1025,59 @@ li {
   font-weight: 600;
 }
 
+/* Forecast confidence indicator (weather certainty, not fish activity) */
+.forecast-confidence {
+  display: inline-block;
+  padding: 1px 8px;
+  border-radius: 999px;
+  font-size: 0.82rem;
+  font-weight: 700;
+  border: 1px solid var(--border);
+}
+.forecast-confidence.good  { color: var(--good);  border-color: var(--good); }
+.forecast-confidence.fair  { color: var(--fair);  border-color: var(--fair); }
+.forecast-confidence.tough { color: var(--tough); border-color: var(--tough); }
+
+.forecast-confidence-note {
+  margin: -8px 0 18px;
+  color: var(--muted);
+  font-size: 0.82rem;
+  line-height: 1.35;
+}
+
+/* Cached-forecast fallback banner */
+.forecast-cache-banner {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  margin-bottom: 16px;
+  padding: 12px 14px;
+  background: var(--card-alt);
+  border: 1px solid var(--border);
+  border-left: 4px solid var(--fair);
+  border-radius: var(--radius-sm);
+  color: var(--text);
+  font-size: 0.88rem;
+  line-height: 1.4;
+}
+.forecast-cache-dot {
+  flex: 0 0 auto;
+  width: 9px;
+  height: 9px;
+  margin-top: 5px;
+  border-radius: 50%;
+  background: var(--fair);
+}
+
+/* Small non-alarming note when moon/solunar data is unavailable */
+.forecast-moon-note {
+  margin: 14px 0 0;
+  color: var(--muted);
+  font-size: 0.85rem;
+  line-height: 1.4;
+  font-style: italic;
+}
+
 .forecast-groups {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));

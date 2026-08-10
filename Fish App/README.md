@@ -18,6 +18,17 @@ Pick one of your saved fishing spots and a forecast date (up to 16 days out). Th
 
 The hourly chart auto-selects the best scoring hour. Hover any bar for a full tooltip, or click to pin that hour's details.
 
+## Reliability
+
+- **Forecast confidence** — a small High / Medium / Low badge based on how far out the date is (weather certainty only; it never changes the BiteScore).
+- **Resilient loading** — weather is required, but moon/solunar data is optional enrichment. If the moon service is down, you still get the full weather-based forecast (moon fields read "Unavailable" and don't affect the score). Both API calls time out gracefully instead of hanging.
+- **Offline cache** — the last successful forecast per spot + date is saved locally and shown as a clearly-labeled fallback if the network fails.
+- **Backup & restore** — *Export Data* downloads your custom spots, favorites, and trip logs as JSON; *Import Data* merges a backup file back in without creating duplicates. Built-in spots stay part of the app code and are never exported.
+
+## Time zones
+
+Weather (Open-Meteo) is requested with `timezone=auto`, so hourly times are already in the fishing spot's local time. Moon times (USNO) are requested using that same spot offset, so moonrise/moonset, solunar windows, and the displayed times all share one local basis — correct regardless of the browser's own time zone.
+
 ## Files
 
 | File | Purpose |

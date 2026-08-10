@@ -21,6 +21,44 @@ let lastSelectedDate = null;
 
 const MAX_FORECAST_DAYS = 16;
 
+// ─── App / API configuration ───────────────────────────────────────────────
+// Centralized so URLs, timeouts, cache rules, and storage keys live in one place.
+
+const APP_VERSION = "1.5.0";              // informational; bump on notable releases
+const CACHE_SCHEMA_VERSION = 1;          // forecast cache snapshot shape; bump to invalidate old caches
+const BACKUP_SCHEMA_VERSION = 1;         // export/import file shape
+
+const OPEN_METEO_BASE = "https://api.open-meteo.com/v1/forecast";
+const USNO_BASE = "https://aa.usno.navy.mil/api/rstt/oneday";
+
+const REQUEST_TIMEOUT_MS = 12000;        // abort external API calls that hang past this
+
+// Cached forecasts are only used as a fallback when the network fails, but we
+// still track staleness so we can tell the user the data may be out of date.
+const CACHE_TTL_TODAY_MS = 6 * 60 * 60 * 1000;    // "today" goes stale after 6 hours
+const CACHE_TTL_FUTURE_MS = 24 * 60 * 60 * 1000;  // future dates go stale after 24 hours
+const MAX_CACHED_FORECASTS = 24;         // cap stored snapshots so localStorage stays small
+
+// All localStorage keys in one object — never scatter raw strings around the app.
+const STORAGE_KEYS = {
+  favorites: "bluegill_favorites",
+  customSpots: "bluegill_customSpots",
+  tripLogs: "bluegill_tripLogs",
+  forecastCache: "bluegill_forecastCache",
+};
+
+// Fetch wrapper that enforces a timeout via AbortController so a slow or hung
+// request can't leave the UI stuck on "Loading...".
+async function fetchWithTimeout(url, timeoutMs = REQUEST_TIMEOUT_MS) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    return await fetch(url, { signal: controller.signal });
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 // --- Spot type helpers ---
 
 const TYPE_ORDER = ["Pond", "Lake Cove", "Creek", "River", "Boat Launch", "Other"];
@@ -343,8 +381,9 @@ function isWithinWindow(targetTime, centerTime, windowMinutes) {
 }
 
 function buildSolunarDataForDate(dateString, moonData) {
-  const moonrise = moonData.moonrise || null;
-  const moonset = moonData.moonset || null;
+  // moonData may be null when the USNO request failed — treat as no solunar windows.
+  const moonrise = moonData?.moonrise || null;
+  const moonset = moonData?.moonset || null;
 
   return {
     majorPeriods: [],
@@ -942,7 +981,7 @@ function buildHourlyForecast(hourly, sunrise, sunset, moonData, solunarData, sel
       isDay: hourData.isDay,
       pressureTrend3h: hourData.pressureTrend3h,
       precipLast6h: hourData.precipLast6h,
-      moonPhase: moonData?.phaseName || "Unknown",
+      moonPhase: moonData?.phaseName || "Unavailable",
       moonIllumination: moonData?.illumination,
       moonrise: moonData?.moonrise,
       moonset: moonData?.moonset,
@@ -989,11 +1028,23 @@ function formatMaybeTime(isoString) {
   });
 }
 
-async function fetchMoonDataForDate(lat, lon, dateString) {
+// Fetches moonrise/moonset/phase from the USNO oneday API.
+//
+// Time-zone handling (important): the USNO API returns rise/set/transit times in
+// the time zone given by its `tz` parameter (offset in hours from UTC, positive
+// east of Greenwich). The old code passed tz=0, so USNO returned UTC times that
+// were then treated as local — shifting the solunar windows.
+//
+// We now pass `tzHours`, the fishing spot's own UTC offset for the selected date
+// (read from Open-Meteo's timezone=auto response, which already accounts for DST).
+// USNO then returns times on the same local wall-clock basis as the Open-Meteo
+// hourly forecast, so solunar comparisons and the displayed moonrise/moonset are
+// correct for the spot's location — never dependent on the browser's time zone.
+async function fetchMoonDataForDate(lat, lon, dateString, tzHours = 0) {
   const usnoUrl =
-    `https://aa.usno.navy.mil/api/rstt/oneday?date=${dateString}&coords=${lat},${lon}&tz=0&id=bluegill`;
+    `${USNO_BASE}?date=${dateString}&coords=${lat},${lon}&tz=${tzHours}&id=bluegill`;
 
-  const response = await fetch(usnoUrl);
+  const response = await fetchWithTimeout(usnoUrl);
   const moonJson = await response.json();
 
   if (!response.ok) {
@@ -1610,7 +1661,273 @@ function renderSelectedHour(hour) {
   `;
 }
 
+// ─── Forecast confidence (Part 5) ──────────────────────────────────────────
+// Confidence reflects how far out the weather forecast is — nothing else.
+// It never changes the BiteScore; it only informs the user about forecast certainty.
+function getForecastConfidence(selectedDate) {
+  const today = getTodayDateString();
+  const diffDays = Math.floor(
+    (new Date(`${selectedDate}T00:00:00`) - new Date(`${today}T00:00:00`)) / 86400000
+  );
+  if (diffDays <= 2) return { level: "High", cls: "good" };
+  if (diffDays <= 5) return { level: "Medium", cls: "fair" };
+  return { level: "Low", cls: "tough" };
+}
+
+// ─── Forecast cache (Part 3) ────────────────────────────────────────────────
+// A compact snapshot of the last successful forecast per spot+date, used as a
+// fallback when the network fails. Cache is never shown as if it were live.
+
+function makeCacheKey(spotId, selectedDate) {
+  // Includes the schema version so an app update can invalidate old snapshots.
+  return `${CACHE_SCHEMA_VERSION}|${spotId}|${selectedDate}`;
+}
+
+function readForecastCacheStore() {
+  try {
+    const raw = localStorage.getItem(STORAGE_KEYS.forecastCache);
+    if (!raw) return {};
+    const parsed = JSON.parse(raw);
+    if (
+      !parsed ||
+      typeof parsed !== "object" ||
+      parsed.version !== CACHE_SCHEMA_VERSION ||
+      typeof parsed.entries !== "object" ||
+      parsed.entries === null
+    ) {
+      return {}; // wrong shape or old schema — ignore safely
+    }
+    return parsed.entries;
+  } catch (e) {
+    console.warn("Forecast cache unreadable; ignoring.", e);
+    return {};
+  }
+}
+
+function writeForecastCacheStore(entries) {
+  try {
+    localStorage.setItem(
+      STORAGE_KEYS.forecastCache,
+      JSON.stringify({ version: CACHE_SCHEMA_VERSION, entries })
+    );
+  } catch (e) {
+    console.warn("Could not save forecast cache:", e);
+  }
+}
+
+function saveForecastToCache(snapshot) {
+  const entries = readForecastCacheStore();
+  entries[snapshot.key] = snapshot;
+
+  // Keep only the most recent MAX_CACHED_FORECASTS snapshots.
+  const keys = Object.keys(entries);
+  if (keys.length > MAX_CACHED_FORECASTS) {
+    keys.sort((a, b) => (entries[a].fetchedAt || 0) - (entries[b].fetchedAt || 0));
+    keys.slice(0, keys.length - MAX_CACHED_FORECASTS).forEach(k => delete entries[k]);
+  }
+  writeForecastCacheStore(entries);
+}
+
+function loadForecastFromCache(spotId, selectedDate) {
+  const entries = readForecastCacheStore();
+  const snap = entries[makeCacheKey(spotId, selectedDate)];
+  if (!snap || !Array.isArray(snap.hourlyResults) || snap.hourlyResults.length === 0) {
+    return null;
+  }
+  return snap;
+}
+
+function isForecastCacheStale(snapshot) {
+  const age = Date.now() - (snapshot.fetchedAt || 0);
+  const ttl = isTodaySelected(snapshot.selectedDate) ? CACHE_TTL_TODAY_MS : CACHE_TTL_FUTURE_MS;
+  return age > ttl;
+}
+
+function formatFetchedAt(ts) {
+  if (!ts) return "an earlier time";
+  const d = new Date(ts);
+  if (Number.isNaN(d.getTime())) return "an earlier time";
+  return d.toLocaleString([], { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
+}
+
+// ─── Shared forecast rendering ──────────────────────────────────────────────
+// Picks the reference "summary" hour: the current hour for today, otherwise the
+// best-scoring bluegill hour (weather data is species-neutral).
+function pickSummaryHour(hourlyResults, selectedDate) {
+  if (!hourlyResults.length) return null;
+  if (isTodaySelected(selectedDate)) {
+    const now = new Date();
+    const currentHourTime = `${selectedDate}T${String(now.getHours()).padStart(2, "0")}:00`;
+    const match = hourlyResults.find(h => h.time === currentHourTime);
+    if (match) return match;
+    return hourlyResults[0];
+  }
+  return [...hourlyResults].sort(
+    (a, b) => b.bluegill.score - a.bluegill.score || a.time.localeCompare(b.time)
+  )[0];
+}
+
+// Turns a technical error into a short, user-friendly line (never a raw stack trace).
+function getFriendlyErrorMessage(error) {
+  if (error && error.name === "AbortError") {
+    return "The request timed out. Check your connection and try again.";
+  }
+  const msg = error && error.message ? String(error.message) : "";
+  if (/failed to fetch|networkerror|load failed/i.test(msg)) {
+    return "Couldn't reach the forecast service. Check your connection and try again.";
+  }
+  // Our own thrown messages are short and safe to show; anything long/multiline is hidden.
+  if (msg && msg.length < 160 && !msg.includes("\n")) return msg;
+  return "Something went wrong loading the forecast. Please try again.";
+}
+
+function showForecastError(error) {
+  hideChartTooltip();
+  weatherOutput.innerHTML = `<p class="forecast-empty-state">Couldn't load the forecast right now.</p>`;
+  scoreOutput.textContent = "--";
+  scoreLabel.textContent = "Error";
+  scoreLabel.classList.remove("good", "fair", "tough");
+  if (bassScoreOutput) bassScoreOutput.textContent = "--";
+  if (bassScoreLabel) { bassScoreLabel.textContent = "—"; bassScoreLabel.classList.remove("good", "fair", "tough"); }
+  scoreHelp.textContent = "Could not load forecast data right now.";
+  scoreHelp.classList.remove("good-state", "fair-state", "tough-state", "neutral-state");
+  scoreHelp.classList.add("neutral-state");
+  reasonOutput.innerHTML = `<p>${escapeHtml(getFriendlyErrorMessage(error))}</p>`;
+  hourlyOutput.innerHTML = "<p>No hourly forecast available.</p>";
+  selectedHourDetails.classList.add("empty");
+  selectedHourDetails.innerHTML = "<p>No selected hour available.</p>";
+}
+
+// Renders a complete forecast (summary, scores, reasons, hourly chart) from a
+// normalized data object. Shared by the live path and the cached-fallback path
+// so the two can never drift apart.
+function renderForecast(data) {
+  const {
+    spotName, selectedDate, hourlyResults, sunrise, sunset,
+    moonData, moonAvailable, fromCache = false, fetchedAt = null
+  } = data;
+
+  const summaryHour = pickSummaryHour(hourlyResults, selectedDate);
+  if (!summaryHour) {
+    showForecastError(new Error(`No hourly forecast available for ${selectedDate}.`));
+    return;
+  }
+
+  const summaryResult = {
+    score: summaryHour.bluegill.score,
+    label: summaryHour.bluegill.label,
+    reasons: summaryHour.bluegill.reasons
+  };
+  const bassSummaryResult = {
+    score: summaryHour.bass.score,
+    label: summaryHour.bass.label
+  };
+
+  const confidence = getForecastConfidence(selectedDate);
+
+  // Moon display fields fall back to a clear "Unavailable" when USNO data failed.
+  const moonPhaseText = moonAvailable ? escapeHtml(moonData?.phaseName || "Unknown") : "Unavailable";
+  const moonIllumText = moonAvailable ? `${roundValue(moonData?.illumination, 0)}%` : "Unavailable";
+  const moonriseText  = moonAvailable ? formatMaybeTime(moonData?.moonrise) : "Unavailable";
+  const moonsetText   = moonAvailable ? formatMaybeTime(moonData?.moonset) : "Unavailable";
+  const transitText   = moonAvailable && moonData?.transit ? formatMaybeTime(moonData.transit) : "—";
+
+  const cacheBanner = fromCache ? `
+    <div class="forecast-cache-banner">
+      <span class="forecast-cache-dot" aria-hidden="true"></span>
+      <div>
+        <strong>Showing a saved forecast.</strong>
+        Last refreshed ${escapeHtml(formatFetchedAt(fetchedAt))}. Live data couldn't be reached,
+        so this may not reflect current conditions${isForecastCacheStale({ selectedDate, fetchedAt }) ? " and is older than the usual refresh window" : ""}.
+      </div>
+    </div>` : "";
+
+  const moonNote = !moonAvailable ? `
+    <p class="forecast-moon-note">Moon &amp; solunar data is temporarily unavailable, so it isn't factored into this score.</p>` : "";
+
+  weatherOutput.innerHTML = `
+    ${cacheBanner}
+    <div class="forecast-meta-row">
+      <div class="forecast-meta-item">
+        <span class="forecast-meta-label">Spot</span>
+        <span class="forecast-meta-value">${escapeHtml(spotName)}</span>
+      </div>
+      <div class="forecast-meta-item">
+        <span class="forecast-meta-label">Date</span>
+        <span class="forecast-meta-value">${new Date(`${selectedDate}T00:00:00`).toLocaleDateString()}</span>
+      </div>
+      <div class="forecast-meta-item">
+        <span class="forecast-meta-label">Summary hour</span>
+        <span class="forecast-meta-value">${escapeHtml(summaryHour.formattedTime)} ${isTodaySelected(selectedDate) ? "(current)" : "(best)"}</span>
+      </div>
+      <div class="forecast-meta-item">
+        <span class="forecast-meta-label">Forecast confidence</span>
+        <span class="forecast-meta-value forecast-confidence ${confidence.cls}">${confidence.level}</span>
+      </div>
+    </div>
+    <p class="forecast-confidence-note">Confidence reflects how far out the weather forecast is — not a guarantee of fish activity.</p>
+    <div class="forecast-groups">
+      <div class="forecast-col">
+        <div class="forecast-group">
+          <div class="forecast-group-title">Weather</div>
+          <div class="forecast-row"><span class="forecast-label">Temperature</span><span class="forecast-value">${roundValue(summaryHour.temperature, 0)}°F</span></div>
+          <div class="forecast-row"><span class="forecast-label">Feels like</span><span class="forecast-value">${roundValue(summaryHour.apparentTemperature, 0)}°F</span></div>
+          <div class="forecast-row"><span class="forecast-label">Cloud cover</span><span class="forecast-value">${roundValue(summaryHour.cloudCover, 0)}%</span></div>
+          <div class="forecast-row"><span class="forecast-label">Rain</span><span class="forecast-value">${roundValue(summaryHour.precipitation, 2)} in</span></div>
+          <div class="forecast-row"><span class="forecast-label">Humidity</span><span class="forecast-value">${roundValue(summaryHour.relativeHumidity, 0)}%</span></div>
+          <div class="forecast-row"><span class="forecast-label">Wind</span><span class="forecast-value">${roundValue(summaryHour.windSpeed, 0)} mph</span></div>
+        </div>
+        <div class="forecast-group">
+          <div class="forecast-group-title">Pressure</div>
+          <div class="forecast-row"><span class="forecast-label">Pressure</span><span class="forecast-value">${roundValue(summaryHour.pressureMsl, 1)} hPa</span></div>
+          <div class="forecast-row"><span class="forecast-label">Trend (3h)</span><span class="forecast-value">${roundValue(summaryHour.pressureTrend3h, 1)} hPa</span></div>
+        </div>
+      </div>
+      <div class="forecast-col">
+        <div class="forecast-group">
+          <div class="forecast-group-title">Sun &amp; Moon</div>
+          <div class="forecast-row"><span class="forecast-label">Sunrise</span><span class="forecast-value">${new Date(sunrise).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}</span></div>
+          <div class="forecast-row"><span class="forecast-label">Sunset</span><span class="forecast-value">${new Date(sunset).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}</span></div>
+          <div class="forecast-row"><span class="forecast-label">Moon phase</span><span class="forecast-value">${moonPhaseText}</span></div>
+          <div class="forecast-row"><span class="forecast-label">Illumination</span><span class="forecast-value">${moonIllumText}</span></div>
+          <div class="forecast-row"><span class="forecast-label">Moonrise</span><span class="forecast-value">${moonriseText}</span></div>
+          <div class="forecast-row"><span class="forecast-label">Moonset</span><span class="forecast-value">${moonsetText}</span></div>
+          <div class="forecast-row"><span class="forecast-label">Moon overhead</span><span class="forecast-value">${transitText}</span></div>
+        </div>
+      </div>
+    </div>
+    ${moonNote}
+  `;
+
+  scoreOutput.textContent = summaryResult.score;
+  scoreLabel.textContent = summaryResult.label;
+  updateScoreLabelStyle(summaryResult.label);
+  updateScoreHelp(summaryResult.score, summaryResult.label, selectedDate);
+
+  if (bassScoreOutput) bassScoreOutput.textContent = bassSummaryResult.score;
+  if (bassScoreLabel) bassScoreLabel.textContent = bassSummaryResult.label;
+  updateBassScoreLabelStyle(bassSummaryResult.label);
+
+  reasonOutput.innerHTML = `
+    <ul>
+      ${summaryResult.reasons.map(reason => `<li>${escapeHtml(reason)}</li>`).join("")}
+    </ul>
+  `;
+
+  lastHourlyResults = hourlyResults;
+  lastSelectedDate = selectedDate;
+  renderHourlyForecast(hourlyResults, selectedDate);
+}
+
 async function getForecast() {
+  // Guard against duplicate requests if the user double-clicks the button.
+  if (forecastBtn.disabled) return;
+
+  const originalBtnText = forecastBtn.textContent;
+  forecastBtn.disabled = true;
+  forecastBtn.textContent = "Loading…";
+
+  try {
   const selectedSpot = spots[Number(spotSelect.value)];
   const selectedDate = forecastDate?.value || getTodayDateString();
 
@@ -1674,7 +1991,7 @@ async function getForecast() {
   const forecastDays = getForecastDaysForSelectedDate(selectedDate);
 
   const weatherUrl =
-    `https://api.open-meteo.com/v1/forecast` +
+    `${OPEN_METEO_BASE}` +
     `?latitude=${selectedSpot.lat}` +
     `&longitude=${selectedSpot.lon}` +
     `&hourly=temperature_2m,apparent_temperature,relative_humidity_2m,precipitation,precipitation_probability,cloud_cover,pressure_msl,surface_pressure,wind_speed_10m,is_day,shortwave_radiation` +
@@ -1686,17 +2003,13 @@ async function getForecast() {
     `&timezone=auto`;
 
   try {
-    const [weatherResponse, moonData] = await Promise.all([
-      fetch(weatherUrl),
-      fetchMoonDataForDate(selectedSpot.lat, selectedSpot.lon, selectedDate)
-    ]);
-
+    // ── Weather is required ──────────────────────────────────────────────
+    const weatherResponse = await fetchWithTimeout(weatherUrl);
     const forecast = await weatherResponse.json();
 
     if (!weatherResponse.ok || forecast.error) {
       throw new Error(forecast.reason || "Forecast request failed.");
     }
-
     if (!forecast.hourly || !forecast.daily) {
       throw new Error("Forecast data is missing hourly or daily values.");
     }
@@ -1711,6 +2024,25 @@ async function getForecast() {
 
     const sunrise = daily.sunrise[dayIndex];
     const sunset = daily.sunset[dayIndex];
+
+    // Open-Meteo (timezone=auto) reports the spot's own UTC offset for this date,
+    // including DST. We reuse it so USNO moon times land on the same local
+    // wall-clock basis as the hourly weather — never the browser's time zone.
+    const utcOffsetSeconds = Number.isFinite(forecast.utc_offset_seconds) ? forecast.utc_offset_seconds : 0;
+    const tzHours = utcOffsetSeconds / 3600;
+
+    // ── Moon data is optional enrichment ─────────────────────────────────
+    // If USNO fails, we still render the full weather forecast; moon/solunar
+    // scoring becomes a neutral zero and moon fields display "Unavailable".
+    let moonData = null;
+    let moonAvailable = false;
+    try {
+      moonData = await fetchMoonDataForDate(selectedSpot.lat, selectedSpot.lon, selectedDate, tzHours);
+      moonAvailable = true;
+    } catch (moonError) {
+      console.warn("Moon data unavailable; continuing with weather only.", moonError);
+    }
+
     const solunarData = buildSolunarDataForDate(selectedDate, moonData);
     const hourlyResults = buildHourlyForecast(hourly, sunrise, sunset, moonData, solunarData, selectedDate, selectedSpot.type);
 
@@ -1718,113 +2050,56 @@ async function getForecast() {
       throw new Error(`No hourly forecast available for ${selectedDate}.`);
     }
 
-    let summaryHour = hourlyResults[0];
+    const fetchedAt = Date.now();
 
-    if (isTodaySelected(selectedDate)) {
-      const currentHourIndex = getCurrentHourIndexForDate(hourly.time, selectedDate);
-      if (currentHourIndex !== -1) {
-        const currentHourTime = hourly.time[currentHourIndex];
-        const matchingHour = hourlyResults.find(hour => hour.time === currentHourTime);
-        if (matchingHour) {
-          summaryHour = matchingHour;
-        }
-      }
-    } else {
-      // Sort by bluegill score to pick the reference hour; weather data is species-neutral
-      summaryHour = [...hourlyResults].sort((a, b) => b.bluegill.score - a.bluegill.score || a.time.localeCompare(b.time))[0];
-    }
+    renderForecast({
+      spotName: selectedSpot.name,
+      selectedDate,
+      hourlyResults,
+      sunrise,
+      sunset,
+      moonData,
+      moonAvailable,
+      fromCache: false,
+      fetchedAt
+    });
 
-    const summaryResult = {
-      score: summaryHour.bluegill.score,
-      label: summaryHour.bluegill.label,
-      reasons: summaryHour.bluegill.reasons
-    };
-
-    const bassSummaryResult = {
-      score: summaryHour.bass.score,
-      label: summaryHour.bass.label
-    };
-
-    weatherOutput.innerHTML = `
-      <div class="forecast-meta-row">
-        <div class="forecast-meta-item">
-          <span class="forecast-meta-label">Spot</span>
-          <span class="forecast-meta-value">${escapeHtml(selectedSpot.name)}</span>
-        </div>
-        <div class="forecast-meta-item">
-          <span class="forecast-meta-label">Date</span>
-          <span class="forecast-meta-value">${new Date(`${selectedDate}T00:00:00`).toLocaleDateString()}</span>
-        </div>
-        <div class="forecast-meta-item">
-          <span class="forecast-meta-label">Summary hour</span>
-          <span class="forecast-meta-value">${escapeHtml(summaryHour.formattedTime)} ${isTodaySelected(selectedDate) ? "(current)" : "(best)"}</span>
-        </div>
-      </div>
-      <div class="forecast-groups">
-        <div class="forecast-col">
-          <div class="forecast-group">
-            <div class="forecast-group-title">Weather</div>
-            <div class="forecast-row"><span class="forecast-label">Temperature</span><span class="forecast-value">${roundValue(summaryHour.temperature, 0)}°F</span></div>
-            <div class="forecast-row"><span class="forecast-label">Feels like</span><span class="forecast-value">${roundValue(summaryHour.apparentTemperature, 0)}°F</span></div>
-            <div class="forecast-row"><span class="forecast-label">Cloud cover</span><span class="forecast-value">${roundValue(summaryHour.cloudCover, 0)}%</span></div>
-            <div class="forecast-row"><span class="forecast-label">Rain</span><span class="forecast-value">${roundValue(summaryHour.precipitation, 2)} in</span></div>
-            <div class="forecast-row"><span class="forecast-label">Humidity</span><span class="forecast-value">${roundValue(summaryHour.relativeHumidity, 0)}%</span></div>
-            <div class="forecast-row"><span class="forecast-label">Wind</span><span class="forecast-value">${roundValue(summaryHour.windSpeed, 0)} mph</span></div>
-          </div>
-          <div class="forecast-group">
-            <div class="forecast-group-title">Pressure</div>
-            <div class="forecast-row"><span class="forecast-label">Pressure</span><span class="forecast-value">${roundValue(summaryHour.pressureMsl, 1)} hPa</span></div>
-            <div class="forecast-row"><span class="forecast-label">Trend (3h)</span><span class="forecast-value">${roundValue(summaryHour.pressureTrend3h, 1)} hPa</span></div>
-          </div>
-        </div>
-        <div class="forecast-col">
-          <div class="forecast-group">
-            <div class="forecast-group-title">Sun &amp; Moon</div>
-            <div class="forecast-row"><span class="forecast-label">Sunrise</span><span class="forecast-value">${new Date(sunrise).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}</span></div>
-            <div class="forecast-row"><span class="forecast-label">Sunset</span><span class="forecast-value">${new Date(sunset).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}</span></div>
-            <div class="forecast-row"><span class="forecast-label">Moon phase</span><span class="forecast-value">${escapeHtml(moonData.phaseName || "Unknown")}</span></div>
-            <div class="forecast-row"><span class="forecast-label">Illumination</span><span class="forecast-value">${roundValue(moonData.illumination, 0)}%</span></div>
-            <div class="forecast-row"><span class="forecast-label">Moonrise</span><span class="forecast-value">${formatMaybeTime(moonData.moonrise)}</span></div>
-            <div class="forecast-row"><span class="forecast-label">Moonset</span><span class="forecast-value">${formatMaybeTime(moonData.moonset)}</span></div>
-            <div class="forecast-row"><span class="forecast-label">Moon overhead</span><span class="forecast-value">${moonData.transit ? formatMaybeTime(moonData.transit) : "—"}</span></div>
-          </div>
-        </div>
-      </div>
-    `;
-
-    scoreOutput.textContent = summaryResult.score;
-    scoreLabel.textContent = summaryResult.label;
-    updateScoreLabelStyle(summaryResult.label);
-    updateScoreHelp(summaryResult.score, summaryResult.label, selectedDate);
-
-    if (bassScoreOutput) bassScoreOutput.textContent = bassSummaryResult.score;
-    if (bassScoreLabel) bassScoreLabel.textContent = bassSummaryResult.label;
-    updateBassScoreLabelStyle(bassSummaryResult.label);
-
-    reasonOutput.innerHTML = `
-      <ul>
-        ${summaryResult.reasons.map(reason => `<li>${escapeHtml(reason)}</li>`).join("")}
-      </ul>
-    `;
-
-    lastHourlyResults = hourlyResults;
-    lastSelectedDate = selectedDate;
-    renderHourlyForecast(hourlyResults, selectedDate);
+    // Save a compact snapshot so we can fall back to it if the network drops later.
+    saveForecastToCache({
+      key: makeCacheKey(selectedSpot.id, selectedDate),
+      spotId: selectedSpot.id,
+      spotName: selectedSpot.name,
+      selectedDate,
+      fetchedAt,
+      sunrise,
+      sunset,
+      moonAvailable,
+      moonData,
+      hourlyResults
+    });
   } catch (error) {
-    hideChartTooltip();
-    weatherOutput.innerHTML = `<p>Error loading forecast.</p>`;
-    scoreOutput.textContent = "--";
-    scoreLabel.textContent = "Error";
-    scoreLabel.classList.remove("good", "fair", "tough");
-    if (bassScoreOutput) bassScoreOutput.textContent = "--";
-    if (bassScoreLabel) { bassScoreLabel.textContent = "—"; bassScoreLabel.classList.remove("good", "fair", "tough"); }
-    scoreHelp.textContent = "Could not load forecast data right now.";
-    scoreHelp.classList.remove("good-state", "fair-state", "tough-state", "neutral-state");
-    scoreHelp.classList.add("neutral-state");
-    reasonOutput.innerHTML = `<p>${escapeHtml(error.message)}</p>`;
-    hourlyOutput.innerHTML = "<p>No hourly forecast available.</p>";
-    selectedHourDetails.classList.add("empty");
-    selectedHourDetails.innerHTML = "<p>No selected hour available.</p>";
+    // Weather failed → try the matching cached forecast before a hard failure.
+    const cached = loadForecastFromCache(selectedSpot.id, selectedDate);
+    if (cached) {
+      renderForecast({
+        spotName: cached.spotName || selectedSpot.name,
+        selectedDate: cached.selectedDate,
+        hourlyResults: cached.hourlyResults,
+        sunrise: cached.sunrise,
+        sunset: cached.sunset,
+        moonData: cached.moonData,
+        moonAvailable: cached.moonAvailable,
+        fromCache: true,
+        fetchedAt: cached.fetchedAt
+      });
+    } else {
+      showForecastError(error);
+    }
+  }
+  } finally {
+    // Always re-enable the button, even after an early return above.
+    forecastBtn.disabled = false;
+    forecastBtn.textContent = originalBtnText;
   }
 }
 
@@ -1835,7 +2110,7 @@ const favorites = new Set();
 
 function loadFavorites() {
   try {
-    const saved = localStorage.getItem("bluegill_favorites");
+    const saved = localStorage.getItem(STORAGE_KEYS.favorites);
     if (!saved) return;
     const parsed = JSON.parse(saved);
     if (Array.isArray(parsed)) parsed.forEach(id => favorites.add(id));
@@ -1846,7 +2121,7 @@ function loadFavorites() {
 
 function persistFavorites() {
   try {
-    localStorage.setItem("bluegill_favorites", JSON.stringify([...favorites]));
+    localStorage.setItem(STORAGE_KEYS.favorites, JSON.stringify([...favorites]));
   } catch (e) {
     console.warn("Could not save favorites:", e);
   }
@@ -2095,7 +2370,7 @@ const customSpots = [];
 
 function loadCustomSpots() {
   try {
-    const saved = localStorage.getItem("bluegill_customSpots");
+    const saved = localStorage.getItem(STORAGE_KEYS.customSpots);
     if (!saved) return;
     const parsed = JSON.parse(saved);
     if (!Array.isArray(parsed)) return;
@@ -2112,7 +2387,7 @@ function loadCustomSpots() {
 
 function persistCustomSpots() {
   try {
-    localStorage.setItem("bluegill_customSpots", JSON.stringify(customSpots));
+    localStorage.setItem(STORAGE_KEYS.customSpots, JSON.stringify(customSpots));
   } catch (e) {
     console.warn("Could not save custom spots:", e);
   }
@@ -2392,7 +2667,7 @@ const tripLogs = [];
 
 function loadTripLogs() {
   try {
-    const saved = localStorage.getItem("bluegill_tripLogs");
+    const saved = localStorage.getItem(STORAGE_KEYS.tripLogs);
     if (!saved) return;
     const parsed = JSON.parse(saved);
     if (Array.isArray(parsed)) parsed.forEach(e => tripLogs.push(e));
@@ -2403,7 +2678,7 @@ function loadTripLogs() {
 
 function persistTripLogs() {
   try {
-    localStorage.setItem("bluegill_tripLogs", JSON.stringify(tripLogs));
+    localStorage.setItem(STORAGE_KEYS.tripLogs, JSON.stringify(tripLogs));
   } catch (e) {
     console.warn("Could not save trip logs:", e);
   }
@@ -2736,6 +3011,152 @@ document.getElementById("resultChips").addEventListener("click", function (e) {
   document.querySelectorAll(".result-chip").forEach(c => c.classList.remove("active"));
   chip.classList.add("active");
   document.getElementById("ltError").classList.add("hidden");
+});
+
+// ─── Data backup / restore (Part 4) ────────────────────────────────────────
+// Exports only browser-local user data (custom spots, favorites, trip logs).
+// Built-in spots from spots.js are part of the app code and are never exported.
+
+function exportUserData() {
+  const payload = {
+    schemaVersion: BACKUP_SCHEMA_VERSION,
+    appVersion: APP_VERSION,
+    exportedAt: new Date().toISOString(),
+    customSpots: customSpots.map(s => ({ ...s })),
+    favorites: [...favorites],
+    tripLogs: tripLogs.map(t => ({ ...t }))
+  };
+
+  const json = JSON.stringify(payload, null, 2);
+  const blob = new Blob([json], { type: "application/json" });
+  const url = URL.createObjectURL(blob);
+
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = `bluegill-backup-${toIsoLocalDate(new Date())}.json`;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  setTimeout(() => URL.revokeObjectURL(url), 0);
+}
+
+// Validates the overall backup file shape before we touch any current data.
+function isValidBackupShape(obj) {
+  return (
+    obj &&
+    typeof obj === "object" &&
+    Array.isArray(obj.customSpots) &&
+    Array.isArray(obj.favorites) &&
+    Array.isArray(obj.tripLogs)
+  );
+}
+
+function isValidImportedSpot(s) {
+  return (
+    s &&
+    typeof s === "object" &&
+    typeof s.id === "string" && s.id &&
+    typeof s.name === "string" && s.name &&
+    typeof s.lat === "number" && !Number.isNaN(s.lat) &&
+    typeof s.lon === "number" && !Number.isNaN(s.lon)
+  );
+}
+
+function importUserData(file) {
+  const reader = new FileReader();
+
+  reader.onload = () => {
+    let parsed;
+    try {
+      parsed = JSON.parse(String(reader.result));
+    } catch (e) {
+      alert("That file couldn't be read as JSON. Please choose a valid backup file.");
+      return;
+    }
+
+    if (!isValidBackupShape(parsed)) {
+      alert("That doesn't look like a Bluegill backup file. No changes were made.");
+      return;
+    }
+
+    // Merge-only: existing data is preserved; duplicates are skipped by ID.
+    const builtinIds = new Set(spots.filter(s => !isCustomSpot(s)).map(s => s.id));
+    const existingCustomIds = new Set(customSpots.map(s => s.id));
+
+    let addedSpots = 0;
+    for (const raw of parsed.customSpots) {
+      if (!isValidImportedSpot(raw)) continue;
+      if (builtinIds.has(raw.id) || existingCustomIds.has(raw.id)) continue;
+      const spot = {
+        id: raw.id,
+        name: raw.name,
+        type: raw.type || "Custom",
+        lat: raw.lat,
+        lon: raw.lon,
+        notes: typeof raw.notes === "string" ? raw.notes : ""
+      };
+      customSpots.push(spot);
+      spots.push(spot);
+      existingCustomIds.add(spot.id);
+      addedSpots++;
+    }
+
+    // Favorites only for spot IDs that actually exist after the spot merge.
+    const allSpotIds = new Set(spots.map(s => s.id));
+    let addedFavs = 0;
+    for (const id of parsed.favorites) {
+      if (typeof id === "string" && allSpotIds.has(id) && !favorites.has(id)) {
+        favorites.add(id);
+        addedFavs++;
+      }
+    }
+
+    // Trip logs merged without duplicate log IDs.
+    const existingLogIds = new Set(tripLogs.map(t => t.id));
+    let addedLogs = 0;
+    for (const raw of parsed.tripLogs) {
+      if (raw && typeof raw === "object" && typeof raw.id === "string" && raw.id && !existingLogIds.has(raw.id)) {
+        tripLogs.push(raw);
+        existingLogIds.add(raw.id);
+        addedLogs++;
+      }
+    }
+    // Keep newest-first ordering by loggedAt (matches the in-app logging order).
+    tripLogs.sort((a, b) => String(b.loggedAt || "").localeCompare(String(a.loggedAt || "")));
+
+    persistCustomSpots();
+    persistFavorites();
+    persistTripLogs();
+
+    // Refresh selectors and any open lists.
+    populateSpots();
+    updateSpotMap();
+    const mySpotsModal = document.getElementById("mySpotsModal");
+    if (mySpotsModal && !mySpotsModal.classList.contains("hidden")) renderMySpotsList();
+    const tripLogModal = document.getElementById("tripLogModal");
+    if (tripLogModal && !tripLogModal.classList.contains("hidden")) renderTripLogList();
+
+    alert(
+      `Import complete.\n\n` +
+      `Added ${addedSpots} spot${addedSpots === 1 ? "" : "s"}, ` +
+      `${addedFavs} favorite${addedFavs === 1 ? "" : "s"}, ` +
+      `${addedLogs} trip log${addedLogs === 1 ? "" : "s"}.\n` +
+      `Existing data was preserved.`
+    );
+  };
+
+  reader.onerror = () => alert("Couldn't read that file. Please try again.");
+  reader.readAsText(file);
+}
+
+document.getElementById("exportDataBtn").addEventListener("click", exportUserData);
+
+const importDataInput = document.getElementById("importDataInput");
+document.getElementById("importDataBtn").addEventListener("click", () => importDataInput.click());
+importDataInput.addEventListener("change", () => {
+  const file = importDataInput.files && importDataInput.files[0];
+  if (file) importUserData(file);
+  importDataInput.value = ""; // reset so the same file can be re-imported later
 });
 
 // Species toggle — switches the hourly chart and selected-hour card between species.
