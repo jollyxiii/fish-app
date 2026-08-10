@@ -243,7 +243,12 @@
   </div>
 
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+  <!-- Loaded in dependency order; all files share one global scope. -->
   <script src="spots.js"></script>
+  <script src="core.js"></script>
+  <script src="scoring.js"></script>
+  <script src="storage.js"></script>
+  <script src="rendering.js"></script>
   <script src="app.js"></script>
 </body>
 </html>

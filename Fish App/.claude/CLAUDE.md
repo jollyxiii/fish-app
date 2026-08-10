@@ -11,10 +11,17 @@ A lightweight beginner-friendly fishing forecast web app focused on bluegill bit
 - Uses moon/solunar data as a light secondary influence
 
 ## Files
-- bluegill-bite-forecast.html
+- biteforecast.html
 - styles.css
-- app.js
-- spots.js
+- spots.js — built-in spot data
+- core.js — config, shared constants, low-level utilities
+- scoring.js — pure BiteScore logic (bluegill + bass)
+- storage.js — localStorage persistence, forecast cache, export/import
+- rendering.js — DOM references and all UI-drawing functions
+- app.js — orchestrator: forecast fetch, map, modals, event wiring
+
+The JS files are classic `<script>` tags sharing one global scope, loaded in
+dependency order: spots → core → scoring → storage → rendering → app.
 
 ## Priorities
 - Keep weather and time-of-day as the main scoring factors

@@ -34,9 +34,15 @@ Weather (Open-Meteo) is requested with `timezone=auto`, so hourly times are alre
 | File | Purpose |
 |------|---------|
 | `biteforecast.html` | App shell and layout |
-| `app.js` | Forecast logic, scoring, and rendering |
-| `spots.js` | Your saved fishing spots (lat/lon + notes) |
+| `spots.js` | Built-in fishing spots (lat/lon + notes) |
+| `core.js` | Config, shared constants, and low-level utilities |
+| `scoring.js` | Pure BiteScore logic for bluegill and bass |
+| `storage.js` | localStorage persistence, forecast cache, export/import |
+| `rendering.js` | DOM references and all UI-drawing functions |
+| `app.js` | Orchestrator: forecast fetch, map, modals, and event wiring |
 | `styles.css` | Styles |
+
+The JavaScript files are plain `<script>` tags sharing one global scope, loaded in dependency order (`spots → core → scoring → storage → rendering → app`). There is no build step — open the HTML directly or serve it with Live Server.
 
 ## Adding spots
 
